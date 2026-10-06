@@ -86,10 +86,10 @@ The app is one stateless Node process: no database, no server-side session store
 npx wrangler secret put SESSION_KEY        # 32+ random chars
 npx wrangler secret put SF_CLIENT_ID       # or set it under "vars"
 npx wrangler secret put SF_CLIENT_SECRET   # skip: PKCE without a secret is preferred
-npm run deploy                             # builds, then wrangler deploy
+npm run deploy                             # wrangler deploy; it runs the build first
 ```
 
-The OAuth callback follows the hostname the Worker is reached on (`https://<host>/auth/callback`); set `APP_BASE_URL` only if a different public URL fronts it. Static assets get their security headers from `web/public/_headers`. `npm run cf:dev` runs it locally in workerd (put `SESSION_KEY` and `SF_CLIENT_ID` in `.dev.vars`). The mock adapter isn't available on Workers.
+The OAuth callback follows the hostname the Worker is reached on (`https://<host>/auth/callback`); set `APP_BASE_URL` only if a different public URL fronts it. Static assets get their security headers from `web/public/_headers`. With a Cloudflare git (Workers Builds) integration, the deploy command is just `npx wrangler deploy`; no separate build command is needed. `npm run cf:dev` runs it locally in workerd (put `SESSION_KEY` and `SF_CLIENT_ID` in `.dev.vars`). The mock adapter isn't available on Workers.
 
 **Access control is up to you.** The app has no user management of its own; it is designed to sit behind something like Cloudflare Access. Anyone who can reach it can start a Salesforce login, but can only see data their own Salesforce user can see. The shared library is the same for everyone.
 

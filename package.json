@@ -19,8 +19,8 @@
     "validate:library": "tsx scripts/validate-library.ts",
     "smoke": "tsx scripts/smoke.ts",
     "e2e": "npm run build && playwright test",
-    "deploy": "npm run build && wrangler deploy",
-    "cf:dev": "npm run build && wrangler dev"
+    "deploy": "wrangler deploy",
+    "cf:dev": "wrangler dev"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.18.0",
