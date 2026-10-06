@@ -1,4 +1,14 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import {
+  buildDateHistogramSql,
+  buildNumericHistogramSql,
+  buildRangeSql,
+  chooseDateUnit,
+  chooseNumericBuckets,
+  dateBars,
+  numericBars,
+  parseRange,
+} from '@shared/histogram';
 import { cookieJar, H, mockApp } from './helpers';
 
 const app = mockApp();
@@ -112,5 +122,44 @@ describe('mock mode API', () => {
     expect(res.status).toBe(200);
     jar.absorb(res);
     expect((await req('/api/dataspaces')).status).toBe(401);
+  });
+});
+
+describe('mock mode: extras and histograms', () => {
+  const local = mockApp();
+  const j = cookieJar();
+  const r = (path: string, init: RequestInit = {}) =>
+    local.request(path, { ...init, headers: { ...(init.headers as Record<string, string>), cookie: j.header() } });
+  const run = async (sql: string) => (await r('/api/query', { method: 'POST', headers: H, body: JSON.stringify({ sql }) })).json();
+
+  beforeAll(async () => {
+    j.absorb(await local.request('/auth/login'));
+  });
+
+  it('lists data streams and segments', async () => {
+    const x = await (await r('/api/extras?dataspace=default')).json();
+    expect(x.errors).toEqual([]);
+    expect(x.dataStreams.total).toBe(3);
+    expect(x.segments.items.map((s: { apiName: string }) => s.apiName)).toContain('Lapsed_VIPs');
+  });
+
+  it('runs the generated range, numeric-histogram and date-histogram SQL', async () => {
+    const obj = { name: 'ssot__Individual__dlm' };
+    const range = await run(buildRangeSql(obj, 'ssot__YearlyIncome__c'));
+    const { min, max, nonNull, total } = parseRange(range.rows[0]);
+    expect(total).toBe(2500);
+    expect(nonNull).toBeLessThan(total); // nulls exist in the fixture
+    const b = chooseNumericBuckets(Number(min), Number(max));
+    const hist = await run(buildNumericHistogramSql(obj, 'ssot__YearlyIncome__c', b));
+    expect(hist.error).toBeUndefined();
+    const bars = numericBars(b, hist.rows);
+    expect(bars.reduce((n, x) => n + x.value, 0)).toBe(nonNull);
+
+    const drange = parseRange((await run(buildRangeSql(obj, 'ssot__CreatedDate__c'))).rows[0]);
+    const unit = chooseDateUnit(drange.min, drange.max);
+    const dh = await run(buildDateHistogramSql(obj, 'ssot__CreatedDate__c', unit));
+    expect(dh.error).toBeUndefined();
+    const dbars = dateBars(drange.min, drange.max, unit, dh.rows);
+    expect(dbars.reduce((n, x) => n + x.value, 0)).toBe(drange.nonNull);
   });
 });

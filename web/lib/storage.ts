@@ -95,3 +95,63 @@ export const savedCredentials = {
   set: (v: SavedCredentials) => writeJson('d360:creds', v),
   clear: () => removeKey('d360:creds'),
 };
+
+export interface TabData {
+  id: string;
+  /** Stable number used to name untitled tabs. */
+  n: number;
+  sql: string;
+  paramDefs: ParamDef[];
+  values: Record<string, string>;
+}
+
+export interface TabStore {
+  tabs: TabData[];
+  active: string;
+}
+
+export const MAX_TABS = 10;
+
+export function emptyTab(existing: TabData[], init: Partial<TabData> = {}): TabData {
+  return {
+    id: crypto.randomUUID(),
+    n: existing.reduce((m, t) => Math.max(m, t.n), 0) + 1,
+    sql: '',
+    paramDefs: [],
+    values: {},
+    ...init,
+  };
+}
+
+export const tabStore = {
+  load(): TabStore {
+    const saved = readJson<TabStore | null>('d360:tabs', null);
+    if (saved?.tabs?.length) {
+      return { tabs: saved.tabs, active: saved.tabs.some((t) => t.id === saved.active) ? saved.active : saved.tabs[0]!.id };
+    }
+    // Before tabs existed there was a single draft.
+    const old = draft.get();
+    const first = emptyTab([], old ? { sql: old.sql, paramDefs: old.paramDefs, values: old.params } : {});
+    return { tabs: [first], active: first.id };
+  },
+  save: (s: TabStore) => writeJson('d360:tabs', s),
+};
+
+/** "Ask before running a query with no LIMIT" can be silenced for the rest of the browser session. */
+export const skipLimitWarning = {
+  get(): boolean {
+    try {
+      return sessionStorage.getItem('d360:skip-limit-warning') === '1';
+    } catch {
+      return false;
+    }
+  },
+  set(on: boolean) {
+    try {
+      if (on) sessionStorage.setItem('d360:skip-limit-warning', '1');
+      else sessionStorage.removeItem('d360:skip-limit-warning');
+    } catch {
+      /* ignore */
+    }
+  },
+};

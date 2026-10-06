@@ -60,15 +60,19 @@ interface Props {
   resetKey: number;
   onChange: (v: string) => void;
   onRun: () => void;
+  /** Alt+Shift+F. */
+  onFormat?: () => void;
+  /** False while the editor sits in a hidden tab; it re-measures when shown again. */
+  visible?: boolean;
   objects: ObjectMeta[];
 }
 
-export function SqlEditor({ value, resetKey, onChange, onRun, objects }: Props) {
+export function SqlEditor({ value, resetKey, onChange, onRun, onFormat, visible = true, objects }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const completions = useRef(new Compartment());
-  const cbs = useRef({ onChange, onRun });
-  cbs.current = { onChange, onRun };
+  const cbs = useRef({ onChange, onRun, onFormat });
+  cbs.current = { onChange, onRun, onFormat };
 
   useEffect(() => {
     const v = new EditorView({
@@ -76,7 +80,12 @@ export function SqlEditor({ value, resetKey, onChange, onRun, objects }: Props) 
       state: EditorState.create({
         doc: value,
         extensions: [
-          Prec.highest(keymap.of([{ key: 'Mod-Enter', run: () => (cbs.current.onRun(), true) }])),
+          Prec.highest(
+            keymap.of([
+              { key: 'Mod-Enter', run: () => (cbs.current.onRun(), true) },
+              { key: 'Alt-Shift-f', run: () => (cbs.current.onFormat?.(), true) },
+            ]),
+          ),
           basicSetup,
           sql({ dialect: PostgreSQL, upperCaseKeywords: true }),
           syntaxHighlighting(highlight),
@@ -100,6 +109,10 @@ export function SqlEditor({ value, resetKey, onChange, onRun, objects }: Props) 
       effects: completions.current.reconfigure(autocompletion({ override: [schemaSource(objects), keywordCompletionSource(PostgreSQL, true)] })),
     });
   }, [objects]);
+
+  useEffect(() => {
+    if (visible) view.current?.requestMeasure();
+  }, [visible]);
 
   useEffect(() => {
     const v = view.current;

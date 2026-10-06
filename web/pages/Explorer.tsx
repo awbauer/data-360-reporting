@@ -1,12 +1,16 @@
 import { useMemo, useState } from 'react';
 import { Link, NavLink, Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { buildPreviewSql, buildProfileBatches, buildRowCountSql, buildTopValuesSql, parseProfileRows, quoteIdent, type ObjectProfile } from '@shared/sql';
+import { buildJoinSql, cardinalityText } from '@shared/join';
+import { buildPreviewSql, buildProfileBatches, buildRowCountSql, parseProfileRows, quoteIdent, type ObjectProfile } from '@shared/sql';
 import type { CellValue, ObjectKind, ObjectMeta } from '@shared/types';
 import { runToCompletion } from '../api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { FieldDistribution } from '../components/FieldDistribution';
+import { RelationshipMap } from '../components/RelationshipMap';
 import { useWorkbench } from '../context';
 import { fmtAgo, fmtNum, fmtPct } from '../lib/format';
 import { countCache, profileCache } from '../lib/storage';
+import { isLinearType } from '@shared/histogram';
 
 const KIND_LABEL: Record<ObjectKind, string> = { dmo: 'DMO', dlo: 'DLO', ci: 'CI' };
 const MAX_LIST = 500;
@@ -72,8 +76,6 @@ export function Explorer() {
   );
 }
 
-interface TopState { loading: boolean; rows?: CellValue[][]; error?: string }
-
 function ObjectDetail() {
   const wb = useWorkbench();
   const nav = useNavigate();
@@ -93,7 +95,7 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
-  const [top, setTop] = useState<Record<string, TopState>>({});
+  const [open, setOpen] = useState<Set<string>>(() => new Set());
 
   const batches = useMemo(() => buildProfileBatches(obj), [obj]);
   const openInEditor = (sql: string, autorun: boolean) => nav('/query', { state: { sql, dataspace: ds, autorun } });
@@ -133,16 +135,6 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
       setError((e as Error).message);
     } finally {
       setBusy(null);
-    }
-  };
-
-  const loadTop = async (field: string) => {
-    setTop((t) => ({ ...t, [field]: { loading: true } }));
-    try {
-      const r = await runToCompletion({ sql: buildTopValuesSql(obj, field, 10), dataspace: ds }, { maxRows: 10 });
-      setTop((t) => ({ ...t, [field]: { loading: false, rows: r.rows } }));
-    } catch (e) {
-      setTop((t) => ({ ...t, [field]: { loading: false, error: (e as Error).message } }));
     }
   };
 
@@ -202,20 +194,10 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
           <tbody>
             {obj.fields.map((f) => {
               const p = profile?.fields[f.name];
-              const t = top[f.name];
+              const isOpen = open.has(f.name);
               return (
-                <FieldRows key={f.name} colSpan={7} expanded={Boolean(t)} detail={t && (
-                  t.loading ? <span className="muted">Loading…</span> : t.error ? <span style={{ color: 'var(--bad)' }}>{t.error}</span> : (
-                    <div className="bars" style={{ maxWidth: 520 }}>
-                      {(t.rows ?? []).map((r) => (
-                        <div className="bar-row" key={String(r[0])}>
-                          <div className="name mono">{r[0] === null ? 'null' : String(r[0])}</div>
-                          <div className="bar-track"><div className="bar-fill" style={{ width: `${(Number(r[1]) / Number(t.rows![0]![1] || 1)) * 100}%` }} /></div>
-                          <div className="val">{fmtNum(Number(r[1]))}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )
+                <FieldRows key={f.name} colSpan={7} expanded={isOpen} detail={isOpen && (
+                  <FieldDistribution obj={obj} field={f} dataspace={ds} profile={p} totalRows={profile?.rows} />
                 )}>
                   <td>
                     <div>{f.label}{f.role && <span className="badge" style={{ marginLeft: 6 }}>{f.role}</span>}</div>
@@ -233,8 +215,16 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
                   <td className="num">{p ? fmtNum(p.distinct) : <span className="muted">–</span>}</td>
                   <td className="mono small">{p && p.min !== undefined ? `${String(p.min ?? '')} – ${String(p.max ?? '')}` : <span className="muted">–</span>}</td>
                   <td className="right">
-                    <button className="link" onClick={() => (t ? setTop(({ [f.name]: _, ...rest }) => rest) : void loadTop(f.name))}>
-                      {t ? 'hide' : 'top values'}
+                    <button
+                      className="link"
+                      aria-expanded={isOpen}
+                      onClick={() => setOpen((cur) => {
+                        const next = new Set(cur);
+                        if (!next.delete(f.name)) next.add(f.name);
+                        return next;
+                      })}
+                    >
+                      {isOpen ? 'hide' : isLinearType(f.type) ? 'histogram' : 'top values'}
                     </button>
                   </td>
                 </FieldRows>
@@ -247,19 +237,37 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
       <div className="card">
         <h2>Relationships ({neighbors.length})</h2>
         {neighbors.length ? (
-          <table className="t">
-            <thead><tr><th /><th>Object</th><th>Join</th><th>Cardinality</th></tr></thead>
-            <tbody>
-              {neighbors.map((r, i) => (
-                <tr key={i}>
-                  <td>{r.dir}</td>
-                  <td><Link to={`/explorer/${encodeURIComponent(r.other)}`}>{wb.byName.get(r.other)?.label ?? r.other}</Link></td>
-                  <td className="mono small">{r.fromEntityAttribute ?? '?'} = {r.toEntityAttribute ?? '?'}</td>
-                  <td>{r.cardinality ?? ''}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="stack">
+            <RelationshipMap center={obj} byName={wb.byName} onOpen={(n) => nav(`/explorer/${encodeURIComponent(n)}`)} />
+            <table className="t">
+              <thead><tr><th /><th>Object</th><th>Join</th><th>Cardinality</th><th /></tr></thead>
+              <tbody>
+                {neighbors.map((r, i) => {
+                  const from = wb.byName.get(r.fromEntity);
+                  const to = wb.byName.get(r.toEntity);
+                  const sql = from && to ? buildJoinSql(from, to, r) : null;
+                  return (
+                    <tr key={i}>
+                      <td title={r.dir === '→' ? 'This object references the other' : 'The other object references this one'}>{r.dir}</td>
+                      <td><Link to={`/explorer/${encodeURIComponent(r.other)}`}>{wb.byName.get(r.other)?.label ?? r.other}</Link></td>
+                      <td className="mono small">{r.fromEntityAttribute ?? '?'} = {r.toEntityAttribute ?? '?'}</td>
+                      <td>{cardinalityText(r.cardinality)}</td>
+                      <td className="right">
+                        <button
+                          className="link"
+                          disabled={!sql}
+                          title={sql ? 'Open a JOIN of these two objects in the editor (not run)' : 'Both objects must be visible in this data space'}
+                          onClick={() => sql && openInEditor(sql, false)}
+                        >
+                          Build JOIN
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         ) : <span className="muted small">No relationships.</span>}
       </div>
 

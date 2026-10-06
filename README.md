@@ -2,9 +2,9 @@
 
 A web workbench for Salesforce **Data 360** (formerly Data Cloud). Sign in with Salesforce, then:
 
-- **Overview**: high-level abstracts of the org's model (objects by category, field-type mix, relationship hubs, objects with no relationships). These come from metadata only, so they use no query credits.
-- **Explorer**: browse data model objects (DMOs), data lake objects (DLOs) and calculated insights, with fields, keys and relationships. Count rows, profile fields (non-null %, approximate distinct, min/max) and sample top values on demand.
-- **Query**: a SQL editor with autocomplete from your metadata, `:named` parameters, cancel, paging and CSV export.
+- **Overview**: high-level abstracts of the org's model (objects by category, field-type mix, relationship hubs, objects with no relationships), plus data stream and segment counts and which streams' last run failed. These come from metadata and list endpoints only, so they use no query credits.
+- **Explorer**: browse data model objects (DMOs), data lake objects (DLOs) and calculated insights, with fields, keys and relationships. Count rows, profile fields (non-null %, approximate distinct, min/max) and see each field's distribution on demand: a **histogram** for numbers and dates (nice bucket edges, or `date_trunc` by hour/day/week/month/quarter/year, with the null share) and top values for everything else. Each object has a clickable **relationship map**, and **Build JOIN** opens a ready-made JOIN of two related objects in the editor.
+- **Query**: a SQL editor with autocomplete from your metadata, `:named` parameters, **multiple tabs**, **Format**, cancel, paging, CSV export and a **Table / Chart** toggle (bar or line of one measure against one dimension). Queries with no `LIMIT` ask first, showing cached row counts for the objects they read.
 - **Library**: a shared set of saved queries that lives in this repository (`queries/`) and changes through pull requests.
 - **History**: your recent runs, kept in your browser only.
 
@@ -102,9 +102,13 @@ Security notes:
 - CSV export neutralizes spreadsheet formulas in text cells (a leading `=`, `+`, `@` or `-` gets a `'` prefix).
 - There is no built-in rate limiting. Put it at the edge if the host is public.
 
+## Who runs the queries
+
+Everything runs as the person who signed in. Sign-in is the OAuth authorization-code flow, so the access token is that user's, and the server uses only that token for Connect API calls (there is no integration user or client-credentials flow). Salesforce documents the `cdp_query_api` scope as running SQL "on behalf of the user", and the query endpoints require that user to have permission to the data space. So data access follows the user's own permissions, and the user is the one Salesforce sees. The app itself keeps no log of who ran what; where the Salesforce side records it (for example Event Monitoring) depends on your org's setup, so check that rather than assuming.
+
 ## Cost awareness
 
-Data 360 bills queries as consumption credits. The app never scans data on its own: the Overview uses metadata only, and row counts, profiling and top-values run only when you click, after a confirmation that states how many queries will run. Results are cached in your browser with a timestamp. Counts and profiles are approximate by design (`APPROX_COUNT_DISTINCT`).
+Data 360 bills queries as consumption credits. The app never scans data on its own: the Overview uses metadata only, and row counts, profiling and top-values run only when you click, after a confirmation that states how many queries will run. Results are cached in your browser with a timestamp. Counts and profiles are approximate by design (`APPROX_COUNT_DISTINCT`). Running a query with no `LIMIT` asks first (and can add one for you); the guard is a text heuristic, so it can miss a `LIMIT` inside a subquery or warn on an unusual query. It can be silenced for the browser session.
 
 ## Query library
 

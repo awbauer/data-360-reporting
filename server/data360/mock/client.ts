@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import type { DatabaseSync as DatabaseSyncType, SQLInputValue } from 'node:sqlite';
-import type { CellValue, QueryColumn } from '../../../shared/types';
+import { DATE_UNITS, parseTimestamp, truncate, type DateUnit } from '../../../shared/histogram';
+import type { CellValue, Extras, QueryColumn } from '../../../shared/types';
 import { normalizeDataSpaces, normalizeMetadata } from '../normalize';
 import { UpstreamError, type Data360Client } from '../types';
 import { DATA_SPACES, MARKETING_OBJECTS, METADATA } from './fixtures';
@@ -111,6 +112,12 @@ export function createMockClient(): Data360Client {
     },
     result: (set: Set<unknown>) => set.size,
   } as never);
+  // Hyper's date_trunc(unit, ts): returns an ISO timestamp with offset, like Data 360 does.
+  db.function('DATE_TRUNC', (unit: unknown, ts: unknown) => {
+    if (ts === null || ts === undefined || !DATE_UNITS.includes(unit as DateUnit)) return null;
+    const t = parseTimestamp(ts);
+    return Number.isFinite(t) ? new Date(truncate(t, unit as DateUnit)).toISOString().replace('.000Z', '+00:00') : null;
+  });
   seed(db);
   const queries = new Map<string, Stored>();
 
@@ -139,6 +146,24 @@ export function createMockClient(): Data360Client {
         ...normalizeMetadata(METADATA.CalculatedInsight, 'ci'),
       ].filter((o) => dataspace === 'default' || MARKETING_OBJECTS.has(o.name));
       return { objects, warnings: [] };
+    },
+
+    async getExtras(dataspace): Promise<Extras> {
+      const streams = [
+        { name: 'Salesforce_CRM_Contact', label: 'Salesforce CRM Contact', status: 'ACTIVE', lastRunStatus: 'SUCCESS', lastRefreshDate: '2026-10-05T04:10:00Z', totalRecords: 2500 },
+        { name: 'Web_SDK_Events', label: 'Web SDK Events', status: 'ACTIVE', lastRunStatus: 'SUCCESS', lastRefreshDate: '2026-10-06T01:00:00Z', totalRecords: 5000 },
+        { name: 'Ecommerce_Orders', label: 'Ecommerce Orders', status: 'ACTIVE', lastRunStatus: 'FAILED', lastRefreshDate: '2026-10-03T22:30:00Z', totalRecords: 1200 },
+      ];
+      const segments = [
+        { apiName: 'Lapsed_VIPs', label: 'Lapsed VIPs', status: 'ACTIVE', publishStatus: 'PUBLISH_SUCCESS', lastMemberCount: 312, lastPublished: '2026-10-05T12:00:00Z' },
+        { apiName: 'New_Subscribers', label: 'New Subscribers', status: 'ACTIVE', publishStatus: 'PUBLISH_SUCCESS', lastMemberCount: 1840, lastPublished: '2026-10-06T06:00:00Z' },
+        { apiName: 'Draft_Test', label: 'Draft Test', status: 'INACTIVE' },
+      ];
+      return {
+        dataStreams: { total: streams.length, truncated: false, items: streams },
+        segments: dataspace === 'default' ? { total: segments.length, truncated: false, items: segments } : { total: 1, truncated: false, items: segments.slice(1, 2) },
+        errors: [],
+      };
     },
 
     async submitQuery({ sql, params, rowLimit }) {

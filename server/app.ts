@@ -238,6 +238,8 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient }: AppDep
 
   app.get('/api/metadata', async (c) => c.json(await c.get('client')!.getMetadata(dataspaceOf(c))));
 
+  app.get('/api/extras', async (c) => c.json(await c.get('client')!.getExtras(dataspaceOf(c))));
+
   app.post('/api/query', async (c) => {
     const body = queryBody.parse(await c.req.json());
     const params = toSqlParameters(body.sql, body.paramDefs as ParamDef[], body.params);

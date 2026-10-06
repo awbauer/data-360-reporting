@@ -7,6 +7,8 @@ import type {
   QueryColumn,
   QueryResponse,
   Relationship,
+  SegmentInfo,
+  StreamInfo,
 } from '../../shared/types';
 import type { PageResult, QueryStatus } from './types';
 
@@ -122,4 +124,43 @@ export function normalizeSubmit(body: unknown): QueryResponse {
 export function normalizePage(body: unknown): PageResult {
   const b = obj(body);
   return { columns: normalizeColumns(b.metadata), rows: normalizeRows(b.data) };
+}
+
+const optStr = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
+const optNum = (v: unknown) => (typeof v === 'number' ? v : undefined);
+
+/** `GET /ssot/data-streams` page: `{dataStreams: [...], totalSize}`. */
+export function normalizeStreams(body: unknown): { items: StreamInfo[]; totalSize?: number } {
+  const b = obj(body);
+  return {
+    totalSize: optNum(b.totalSize),
+    items: arr(b.dataStreams).map((d): StreamInfo => {
+      const o = obj(d);
+      const name = str(o.name);
+      return {
+        name,
+        label: str(o.label, name),
+        ...(optStr(o.status) ? { status: str(o.status) } : {}),
+        ...(optStr(o.lastRunStatus) ? { lastRunStatus: str(o.lastRunStatus) } : {}),
+        ...(optStr(o.lastRefreshDate) ? { lastRefreshDate: str(o.lastRefreshDate) } : {}),
+        ...(optNum(o.totalRecords) !== undefined ? { totalRecords: optNum(o.totalRecords) } : {}),
+      };
+    }),
+  };
+}
+
+/** `GET /ssot/segments` page: `{segments: [...]}` with no total. */
+export function normalizeSegments(body: unknown): SegmentInfo[] {
+  return arr(obj(body).segments).map((d): SegmentInfo => {
+    const o = obj(d);
+    const apiName = str(o.apiName, str(o.developerName));
+    return {
+      apiName,
+      label: str(o.displayName, apiName),
+      ...(optStr(o.segmentStatus) ? { status: str(o.segmentStatus) } : {}),
+      ...(optStr(o.publishStatus) ? { publishStatus: str(o.publishStatus) } : {}),
+      ...(optNum(o.lastSegmentMemberCount) !== undefined ? { lastMemberCount: optNum(o.lastSegmentMemberCount) } : {}),
+      ...(optStr(o.lastPublishedEndDateTime) ? { lastPublished: str(o.lastPublishedEndDateTime) } : {}),
+    };
+  });
 }
