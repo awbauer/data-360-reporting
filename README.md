@@ -68,6 +68,19 @@ npm run build && npm start         # or: docker build -t data360-workbench .
 
 The app is one stateless Node process: no database, no server-side session store. Session state lives in an encrypted, HttpOnly cookie, so you can run several replicas behind a load balancer as long as they share `SESSION_KEY`.
 
+### Cloudflare Workers
+
+`wrangler.jsonc` deploys the built SPA as static assets and runs the same Hono app in a Worker for `/api/*` and `/auth/*` (a pure static deploy can't work: the OAuth code exchange, the API proxy and the session cookie all need server code). Preview URLs are disabled.
+
+```bash
+npx wrangler secret put SESSION_KEY        # 32+ random chars
+npx wrangler secret put SF_CLIENT_ID       # or set it under "vars"
+npx wrangler secret put SF_CLIENT_SECRET   # optional
+npm run deploy                             # builds, then wrangler deploy
+```
+
+The OAuth callback follows the hostname the Worker is reached on (`https://<host>/auth/callback`); set `APP_BASE_URL` only if a different public URL fronts it. Static assets get their security headers from `web/public/_headers`. `npm run cf:dev` runs it locally in workerd (put `SESSION_KEY` and `SF_CLIENT_ID` in `.dev.vars`). The mock adapter isn't available on Workers.
+
 **Access control is up to you.** The app has no user management of its own; it is designed to sit behind something like Cloudflare Access. Anyone who can reach it can start a Salesforce login, but can only see data their own Salesforce user can see. The shared library is the same for everyone.
 
 Security notes:
