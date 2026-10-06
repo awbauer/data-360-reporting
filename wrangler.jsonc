@@ -1,0 +1,36 @@
+// Cloudflare Workers deployment: the built SPA is served as static assets, and the
+// same Hono app that runs on Node handles /api/* and /auth/* in the Worker.
+//
+// Before the first deploy:
+//   npx wrangler secret put SESSION_KEY        # 32+ random chars (openssl rand -hex 32)
+//   npx wrangler secret put SF_CLIENT_ID       # or put it in "vars" below; it isn't secret
+//   npx wrangler secret put SF_CLIENT_SECRET   # skip this: PKCE without a secret is preferred
+// Then: npm run deploy
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "data360-workbench",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // No preview URLs for this Worker.
+  "preview_urls": false,
+
+  "assets": {
+    "directory": "./dist/web",
+    "binding": "ASSETS",
+    // Client-side routes (/explorer/..., /query) fall back to index.html.
+    "not_found_handling": "single-page-application",
+    // Only these hit the Worker; every other path is served straight from assets.
+    "run_worker_first": ["/api/*", "/auth/*"]
+  },
+
+  "vars": {
+    "NODE_ENV": "production"
+    // APP_BASE_URL defaults to the request's origin, so OAuth callbacks follow whatever
+    // hostname you attach. Set it only if you front the Worker with a different public URL.
+    // "APP_BASE_URL": "https://workbench.example.com",
+  },
+
+  "observability": { "enabled": true }
+}
