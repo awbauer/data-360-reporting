@@ -11,8 +11,13 @@ test('user-supplied consumer key and secret: encrypted at rest, never in a URL',
   await context.route('https://login.salesforce.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/html', body: 'salesforce' }));
 
   await page.goto(LIVE);
+  // The preferred path is spelled out before the user types anything.
+  await expect(page.getByText('Recommended: PKCE, no secret.')).toBeVisible();
+  await expect(page.getByText(`${LIVE}/auth/callback`)).toBeVisible();
+  await expect(page.getByText(/less safe than PKCE/)).toHaveCount(0);
   await page.getByLabel('Consumer key').fill(KEY);
-  await page.getByLabel('Consumer secret (optional)').fill(SECRET);
+  await page.getByLabel(/Consumer secret/).fill(SECRET);
+  await expect(page.getByText(/less safe than PKCE/)).toBeVisible();
   await page.getByLabel(/Remember on this device/).check();
   await page.getByRole('button', { name: 'Connect to Salesforce' }).click();
 
@@ -33,7 +38,7 @@ test('user-supplied consumer key and secret: encrypted at rest, never in a URL',
 
   // The saved credentials are used without retyping the secret.
   await expect(page.getByText(KEY)).toBeVisible();
-  await expect(page.getByLabel('Consumer secret (optional)')).toHaveCount(0);
+  await expect(page.getByLabel(/Consumer secret/)).toHaveCount(0);
   await page.getByRole('button', { name: 'Connect to Salesforce' }).click();
   await page.waitForURL(/login\.salesforce\.com\/services\/oauth2\/authorize/);
   expect(new URL(page.url()).searchParams.get('client_id')).toBe(KEY);

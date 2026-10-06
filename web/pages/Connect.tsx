@@ -80,7 +80,7 @@ export function Connect({ session }: { session: SessionInfo }) {
         </div>
         <p className="muted" style={{ margin: 0 }}>
           Browse metadata, profile data and run SQL against a Data 360 org. You sign in with Salesforce; nothing is
-          stored about your org on the server.
+          stored about your org on the server. Sign-in uses OAuth with PKCE, so no client secret is needed.
         </p>
         {error && <div className="alert error" role="alert">{error}</div>}
         {session.mock ? (
@@ -103,6 +103,13 @@ export function Connect({ session }: { session: SessionInfo }) {
             )}
             <details open={Boolean(saved) || !session.defaultClientConfigured}>
               <summary>Your own External Client App{session.defaultClientConfigured ? ' (optional)' : ''}</summary>
+              <div className="alert small" style={{ marginTop: 10 }}>
+                <b>Recommended: PKCE, no secret.</b> Sign-in always uses PKCE. In your External Client App, enable the
+                authorization-code flow, require PKCE, turn off “Require secret for Web Server flow”, and add the
+                callback URL <code>{window.location.origin}/auth/callback</code> with scopes <code>api</code>,{' '}
+                <code>refresh_token</code>, <code>cdp_query_api</code> and <code>cdp_profile_api</code>. Then paste just
+                the consumer key. An app only authorizes the org that owns it, so use each org's own key.
+              </div>
               {saved ? (
                 <div className="stack" style={{ marginTop: 10 }}>
                   <div className="alert">
@@ -124,12 +131,12 @@ export function Connect({ session }: { session: SessionInfo }) {
                     />
                   </label>
                   <label>
-                    Consumer secret (optional)
+                    Consumer secret (optional, not recommended)
                     <input
                       type="password"
                       value={clientSecret}
                       onChange={(e) => setClientSecret(e.target.value)}
-                      placeholder="Only if your app requires one"
+                      placeholder="Leave empty to sign in with PKCE"
                       autoComplete="off"
                       spellCheck={false}
                     />
@@ -138,11 +145,16 @@ export function Connect({ session }: { session: SessionInfo }) {
                     <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} disabled={!clientId.trim()} style={{ width: 'auto' }} />
                     Remember on this device (secret encrypted)
                   </label>
+                  {clientSecret && (
+                    <div className="alert warn small" role="note">
+                      A secret is less safe than PKCE alone. If your app lets you, turn off “Require secret for Web
+                      Server flow” and leave this empty.
+                    </div>
+                  )}
                   <p className="small muted" style={{ margin: 0 }}>
                     Used only for your sign-in. The secret is held in an encrypted session cookie and is never put in a
                     URL or stored on the server. If you remember it, the browser keeps only ciphertext that this server
-                    can decrypt. An External Client App only authorizes the org that owns it; without a secret the app
-                    signs in with PKCE alone.
+                    can decrypt.
                   </p>
                 </div>
               )}

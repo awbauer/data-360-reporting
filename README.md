@@ -23,19 +23,23 @@ Mock mode (`DATA360_MOCK=1`) serves sample objects backed by an in-memory SQLite
 
 Data 360 is reached through the **Connect REST API** on the org's own `instance_url` with the normal OAuth access token (`/services/data/vXX.X/ssot/...`). No separate Data 360 token exchange is needed.
 
+**Recommended setup: PKCE, no client secret.** The app always signs in with the authorization-code flow plus PKCE, which protects the code exchange without any secret. A secret only adds something to protect and leak, so prefer an app that doesn't need one.
+
 1. In Salesforce Setup, create an **External Client App** (a Connected App also works):
+   - Enable OAuth with the **authorization-code** flow, **require PKCE**, and turn **off** "Require secret for Web Server flow" (setting labels vary slightly by release).
    - **Callback URL:** `https://<your-host>/auth/callback` (for local dev with the Vite server, `http://localhost:5173/auth/callback`)
    - **Scopes:** `api`, `refresh_token`, `cdp_query_api`, `cdp_profile_api`
-   - Enable the authorization-code flow. **Require PKCE** can stay on; the app always uses PKCE. Issue a client secret only if you want the server to use one.
-2. Set `SF_CLIENT_ID` (and optionally `SF_CLIENT_SECRET`), `APP_BASE_URL` and `SESSION_KEY` (see `.env.example`).
+2. Set `SF_CLIENT_ID` and `APP_BASE_URL`, plus `SESSION_KEY` in production (see `.env.example`). Leave `SF_CLIENT_SECRET` unset.
 3. Users need **View Data 360** (or equivalent) access, and permission to the data spaces they pick.
+
+Only if your org requires a secret for the web-server flow: set `SF_CLIENT_SECRET` for the shared app, or let users enter theirs (below). Treat that as the fallback, not the default.
 
 **One app, many orgs?** An External Client App only authorizes the org that owns it. To connect another org, users can enter that org's own **consumer key** (and **secret**, if the app requires one) under *Your own External Client App* on the Connect screen:
 
 - The credentials go to the server in a POST body, never a URL, and are parked in a 10-minute sealed cookie for the login redirect. The secret then lives only inside the encrypted session cookie (needed for token refresh). Nothing is stored server-side.
 - With **Remember on this device**, the browser keeps a blob that the server encrypted with AES-GCM under `SESSION_KEY`. It is unreadable without the server, expires after 180 days, and is bound to its purpose so it can't be replayed as a session. **Forget** deletes it. Rotating `SESSION_KEY` invalidates every saved blob and session; users just re-enter their credentials.
-- Without a secret the app signs in with PKCE alone. The server's own `SF_CLIENT_SECRET` is never sent with a user-supplied key.
-- Anyone who can run JavaScript on the page (XSS) could use a saved blob against this server, which is one reason the CSP is strict. Prefer an app without a secret (PKCE only) where your org allows it.
+- Without a secret (preferred) the app signs in with PKCE alone. The server's own `SF_CLIENT_SECRET` is never sent with a user-supplied key.
+- Anyone who can run JavaScript on the page (XSS) could use a saved blob against this server, which is one reason the CSP is strict. Another reason to prefer an app without a secret.
 
 ### Verify against your org
 
@@ -54,7 +58,8 @@ It exercises data spaces, metadata, submit/status/rows/cancel and a parameterise
 |---|---|---|
 | `SESSION_KEY` | random (dev only) | 32+ chars, encrypts session cookies. **Required in production.** |
 | `APP_BASE_URL` | `http://localhost:8787` | Public URL; OAuth callback is `${APP_BASE_URL}/auth/callback`. `https://` turns on `Secure` cookies. |
-| `SF_CLIENT_ID` / `SF_CLIENT_SECRET` | none | The app's External Client App. Secret optional. |
+| `SF_CLIENT_ID` | none | The app's External Client App (consumer key). |
+| `SF_CLIENT_SECRET` | none | Only if your app requires a secret. PKCE without a secret is preferred. |
 | `SF_LOGIN_URL` | `https://login.salesforce.com` | Login host for the "Production" option. |
 | `SF_SCOPES` | `api refresh_token cdp_query_api cdp_profile_api` | Requested OAuth scopes. |
 | `SF_API_VERSION` | `v65.0` | Connect REST API version (needs ≥ v63.0 for `query-sql`). |
@@ -80,7 +85,7 @@ The app is one stateless Node process: no database, no server-side session store
 ```bash
 npx wrangler secret put SESSION_KEY        # 32+ random chars
 npx wrangler secret put SF_CLIENT_ID       # or set it under "vars"
-npx wrangler secret put SF_CLIENT_SECRET   # optional
+npx wrangler secret put SF_CLIENT_SECRET   # skip: PKCE without a secret is preferred
 npm run deploy                             # builds, then wrangler deploy
 ```
 

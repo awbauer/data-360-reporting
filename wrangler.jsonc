@@ -4,7 +4,7 @@
 // Before the first deploy:
 //   npx wrangler secret put SESSION_KEY        # 32+ random chars (openssl rand -hex 32)
 //   npx wrangler secret put SF_CLIENT_ID       # or put it in "vars" below; it isn't secret
-//   npx wrangler secret put SF_CLIENT_SECRET   # optional; omit to use PKCE only
+//   npx wrangler secret put SF_CLIENT_SECRET   # skip this: PKCE without a secret is preferred
 // Then: npm run deploy
 {
   "$schema": "node_modules/wrangler/config-schema.json",
