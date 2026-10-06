@@ -37,5 +37,24 @@
     // "APP_BASE_URL": "https://workbench.example.com",
   },
 
-  "observability": { "enabled": true }
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    // Note: false logs full query strings, which on /auth/callback include the OAuth `code` and `state`.
+    "redact_query_string": false,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true,
+      "persist": true
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true
+    },
+    "issue_detection": {
+      "enabled": true
+    }
+  }
 }
