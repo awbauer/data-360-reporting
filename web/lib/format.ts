@@ -1,0 +1,23 @@
+const nf = new Intl.NumberFormat('en-US');
+
+export const fmtNum = (n: number): string => nf.format(n);
+
+export function fmtCompact(n: number): string {
+  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
+}
+
+export function fmtAgo(iso: string, now = Date.now()): string {
+  const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86_400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86_400)}d ago`;
+}
+
+export function fmtMs(ms: number): string {
+  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
+export function fmtPct(x: number): string {
+  return `${(x * 100).toFixed(x > 0 && x < 0.01 ? 2 : 1)}%`;
+}
