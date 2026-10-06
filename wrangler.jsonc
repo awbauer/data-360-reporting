@@ -2,7 +2,8 @@
 // same Hono app that runs on Node handles /api/* and /auth/* in the Worker.
 //
 // Before the first deploy:
-//   npx wrangler secret put SESSION_KEY        # 32+ random chars (openssl rand -hex 32)
+//   npx wrangler secret put SESSION_KEY        # 32+ random chars (openssl rand -hex 32); or add it in
+//                                              # the dashboard with type "Secret". Deploys never overwrite it.
 //   npx wrangler secret put SF_CLIENT_ID       # or put it in "vars" below; it isn't secret
 //   npx wrangler secret put SF_CLIENT_SECRET   # skip this: PKCE without a secret is preferred
 // Then: npm run deploy   (or let a Workers Builds git integration run `npx wrangler deploy`;
@@ -30,6 +31,10 @@
     "run_worker_first": ["/api/*", "/auth/*"]
   },
 
+  // Keep variables set in the Cloudflare dashboard. Without this, `wrangler deploy` deletes any
+  // plaintext variable that isn't listed in "vars" below. (Secrets are never touched by a deploy.)
+  "keep_vars": true,
+
   "vars": {
     "NODE_ENV": "production"
     // APP_BASE_URL defaults to the request's origin, so OAuth callbacks follow whatever
@@ -37,5 +42,24 @@
     // "APP_BASE_URL": "https://workbench.example.com",
   },
 
-  "observability": { "enabled": true }
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    // Note: false logs full query strings, which on /auth/callback include the OAuth `code` and `state`.
+    "redact_query_string": false,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true,
+      "persist": true
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true
+    },
+    "issue_detection": {
+      "enabled": true
+    }
+  }
 }
