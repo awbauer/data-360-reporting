@@ -5,7 +5,8 @@
 //   npx wrangler secret put SESSION_KEY        # 32+ random chars (openssl rand -hex 32)
 //   npx wrangler secret put SF_CLIENT_ID       # or put it in "vars" below; it isn't secret
 //   npx wrangler secret put SF_CLIENT_SECRET   # skip this: PKCE without a secret is preferred
-// Then: npm run deploy
+// Then: npm run deploy   (or let a Workers Builds git integration run `npx wrangler deploy`;
+// the "build" step below produces dist/web first)
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "data360-workbench",
@@ -15,6 +16,10 @@
 
   // No preview URLs for this Worker.
   "preview_urls": false,
+
+  // Build the SPA before every deploy (also covers Cloudflare's git-connected builds, whose
+  // default deploy step is just `wrangler deploy`). Needs devDependencies installed, which is the default.
+  "build": { "command": "npm run build" },
 
   "assets": {
     "directory": "./dist/web",
