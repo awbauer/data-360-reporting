@@ -7,6 +7,8 @@ export interface Session {
   instanceUrl: string;
   loginHost: string;
   clientId: string;
+  /** Secret the user supplied for their own app; lives only inside the sealed session cookie. */
+  clientSecret?: string;
   mock?: boolean;
 }
 
@@ -17,13 +19,17 @@ export interface OAuthTx {
   state: string;
   loginHost: string;
   clientId: string;
+  clientSecret?: string;
 }
 
 export class OAuthError extends Error {}
 
-/** Only the app's own configured client uses the secret; a user-supplied key is PKCE-only. */
-function clientSecretFor(config: Config, clientId: string): string | undefined {
-  return clientId === config.clientId ? config.clientSecret : undefined;
+/**
+ * A secret the user supplied wins. Otherwise only the app's own configured client uses the
+ * server's secret; any other consumer key signs in with PKCE alone.
+ */
+function clientSecretFor(config: Config, clientId: string, supplied?: string): string | undefined {
+  return supplied ?? (clientId === config.clientId ? config.clientSecret : undefined);
 }
 
 export function authorizeUrl(config: Config, tx: OAuthTx, challenge: string): string {
@@ -63,7 +69,7 @@ export async function exchangeCode(
   tx: OAuthTx,
   code: string,
 ): Promise<Session> {
-  const secret = clientSecretFor(config, tx.clientId);
+  const secret = clientSecretFor(config, tx.clientId, tx.clientSecret);
   const json = await tokenRequest(config, fetchFn, tx.loginHost, {
     grant_type: 'authorization_code',
     code,
@@ -81,6 +87,7 @@ export async function exchangeCode(
     instanceUrl: assertAllowedOrigin(json.instance_url, config.allowedHostSuffixes),
     loginHost: tx.loginHost,
     clientId: tx.clientId,
+    ...(tx.clientSecret ? { clientSecret: tx.clientSecret } : {}),
   };
 }
 
@@ -88,7 +95,7 @@ export async function exchangeCode(
 export async function refreshSession(config: Config, fetchFn: FetchLike, s: Session): Promise<Session | null> {
   if (!s.refreshToken) return null;
   try {
-    const secret = clientSecretFor(config, s.clientId);
+    const secret = clientSecretFor(config, s.clientId, s.clientSecret);
     const json = await tokenRequest(config, fetchFn, s.loginHost, {
       grant_type: 'refresh_token',
       refresh_token: s.refreshToken,

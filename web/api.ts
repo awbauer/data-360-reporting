@@ -38,6 +38,21 @@ export interface SessionInfo {
   defaultClientConfigured: boolean;
 }
 
+export interface CredentialsInput {
+  clientId?: string;
+  clientSecret?: string;
+  /** Ciphertext from an earlier `remember`. */
+  saved?: string;
+  remember?: boolean;
+}
+
+export interface CredentialsResult {
+  clientId: string;
+  hasSecret: boolean;
+  /** Present when `remember` was requested: encrypted by the server, safe to keep in localStorage. */
+  saved?: string;
+}
+
 export interface QueryStatus {
   queryId: string;
   done: boolean;
@@ -56,6 +71,8 @@ const enc = encodeURIComponent;
 
 export const api = {
   session: () => request<SessionInfo>('/api/session'),
+  /** Park the user's own consumer key/secret in a short-lived sealed cookie before /auth/login. */
+  credentials: (input: CredentialsInput) => request<CredentialsResult>('/auth/credentials', { method: 'POST', json: input }),
   logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
   dataspaces: () => request<DataSpace[]>('/api/dataspaces'),
   metadata: (dataspace: string) =>

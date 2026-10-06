@@ -27,6 +27,28 @@ const json = (body: unknown, status = 200) =>
 const tokenOk = (over: Record<string, unknown> = {}) =>
   json({ access_token: 'AT1', refresh_token: 'RT1', instance_url: INSTANCE, ...over });
 
+type App = ReturnType<typeof realApp>;
+
+/** POST /auth/credentials, returning the app, the cookie jar holding the credentials cookie, and the JSON reply. */
+async function withCredentials(fetchFn: FetchLike, body: Record<string, unknown>) {
+  const app = realApp(fetchFn);
+  const jar = cookieJar();
+  const res = await app.request('/auth/credentials', { method: 'POST', headers: H, body: JSON.stringify(body) });
+  expect(res.status).toBe(200);
+  jar.absorb(res);
+  return { app, jar, prepare: (await res.json()) as Record<string, unknown> };
+}
+
+/** Run /auth/login then /auth/callback with whatever cookies the jar holds. */
+async function finishLogin(app: App, jar: ReturnType<typeof cookieJar>) {
+  const login = await app.request('/auth/login', { headers: { cookie: jar.header() } });
+  jar.absorb(login);
+  const state = new URL(login.headers.get('location')!).searchParams.get('state');
+  const cb = await app.request(`/auth/callback?code=CODE&state=${state}`, { headers: { cookie: jar.header() } });
+  jar.absorb(cb);
+  return { login, cb };
+}
+
 async function connect(fetchFn: FetchLike, query = '') {
   const app = realApp(fetchFn);
   const jar = cookieJar();
@@ -85,10 +107,81 @@ describe('OAuth', () => {
 
   it('never sends the app secret with a user-supplied consumer key', async () => {
     const { fetchFn, calls } = fakeSalesforce((c) => (c.url.endsWith('/services/oauth2/token') ? tokenOk() : undefined));
-    await connect(fetchFn, '?clientId=OTHERKEY1234567890');
+    const { app, jar } = await withCredentials(fetchFn, { clientId: 'OTHERKEY1234567890' });
+    await finishLogin(app, jar);
     const body = new URLSearchParams(calls[0]!.body);
     expect(body.get('client_id')).toBe('OTHERKEY1234567890');
     expect(body.has('client_secret')).toBe(false);
+  });
+
+  it('uses a user-supplied secret for the exchange and for refresh, never exposing it', async () => {
+    const { fetchFn, calls } = fakeSalesforce((c) => {
+      if (c.url.endsWith('/services/oauth2/token')) return c.body.includes('refresh_token=') ? json({ access_token: 'AT2', instance_url: INSTANCE }) : tokenOk();
+      if (c.url.includes('/data-spaces')) return c.headers.authorization === 'Bearer AT2' ? json({ dataSpaces: [] }) : json([{ errorCode: 'INVALID_SESSION_ID' }], 401);
+      return undefined;
+    });
+    const { app, jar, prepare } = await withCredentials(fetchFn, { clientId: 'USERKEY12345678', clientSecret: 'user-secret-value' });
+    expect(JSON.stringify(prepare)).not.toContain('user-secret-value');
+    expect(prepare).toEqual({ clientId: 'USERKEY12345678', hasSecret: true });
+    const { cb } = await finishLogin(app, jar);
+    expect(cb.headers.get('location')).toBe('/');
+    expect(new URLSearchParams(calls[0]!.body).get('client_secret')).toBe('user-secret-value');
+    // Nothing readable in any cookie we handed out.
+    expect(jar.header()).not.toContain('user-secret-value');
+    await app.request('/api/dataspaces', { headers: { cookie: jar.header() } }); // 401 → refresh
+    const refresh = calls.find((c) => c.body.includes('grant_type=refresh_token'))!;
+    expect(new URLSearchParams(refresh.body).get('client_secret')).toBe('user-secret-value');
+  });
+
+  it('never puts credentials in the login URL and consumes the credentials cookie', async () => {
+    const { fetchFn } = fakeSalesforce(() => tokenOk());
+    const { app, jar } = await withCredentials(fetchFn, { clientId: 'USERKEY12345678', clientSecret: 'user-secret-value' });
+    const login = await app.request('/auth/login', { headers: { cookie: jar.header() } });
+    jar.absorb(login);
+    expect(login.headers.get('location')).not.toContain('user-secret-value');
+    expect(jar.has('d360_cred')).toBe(false);
+  });
+
+  it('returns an encrypted blob when asked to remember, and accepts it later', async () => {
+    const { fetchFn, calls } = fakeSalesforce((c) => (c.url.endsWith('/services/oauth2/token') ? tokenOk() : undefined));
+    const { app, prepare } = await withCredentials(fetchFn, { clientId: 'USERKEY12345678', clientSecret: 'user-secret-value', remember: true });
+    const saved = (prepare as { saved: string }).saved;
+    expect(saved).toBeTruthy();
+    expect(saved).not.toContain('user-secret-value');
+    expect(Buffer.from(saved, 'base64url').toString('utf8')).not.toContain('user-secret-value');
+    // A later visit presents only the blob.
+    const jar = cookieJar();
+    const res = await app.request('/auth/credentials', { method: 'POST', headers: H, body: JSON.stringify({ saved }) });
+    jar.absorb(res);
+    expect(await res.json()).toEqual({ clientId: 'USERKEY12345678', hasSecret: true });
+    await finishLogin(app, jar);
+    expect(new URLSearchParams(calls[0]!.body).get('client_secret')).toBe('user-secret-value');
+  });
+
+  it('rejects tampered or foreign blobs, and a blob used as a session or credential cookie', async () => {
+    const { fetchFn } = fakeSalesforce(() => tokenOk());
+    const { app, prepare } = await withCredentials(fetchFn, { clientId: 'USERKEY12345678', clientSecret: 'user-secret-value', remember: true });
+    const saved = (prepare as { saved: string }).saved;
+    const bad = await app.request('/auth/credentials', { method: 'POST', headers: H, body: JSON.stringify({ saved: saved.slice(0, -3) + 'AAA' }) });
+    expect(bad.status).toBe(400);
+    expect((await bad.json()).error).toBe('saved_unreadable');
+    // wrong purpose: the saved blob is not a session
+    const asSession = await app.request('/api/session', { headers: { cookie: `d360_session=${saved}` } });
+    expect((await asSession.json()).connected).toBe(false);
+    // and a different server key can't read it
+    const other = realApp(fetchFn, { SESSION_KEY: 'z'.repeat(40) });
+    const res = await other.request('/auth/credentials', { method: 'POST', headers: H, body: JSON.stringify({ saved }) });
+    expect(res.status).toBe(400);
+  });
+
+  it('validates typed credentials and requires the CSRF header', async () => {
+    const { fetchFn } = fakeSalesforce(() => undefined);
+    const app = realApp(fetchFn);
+    const post = (body: unknown, headers: Record<string, string> = H) => app.request('/auth/credentials', { method: 'POST', headers, body: JSON.stringify(body) });
+    expect((await post({ clientId: 'short' })).status).toBe(400);
+    expect((await post({ clientId: 'USERKEY12345678', clientSecret: 'has space in it' })).status).toBe(400);
+    expect((await post({})).status).toBe(400);
+    expect((await post({ clientId: 'USERKEY12345678' }, { 'content-type': 'application/json' })).status).toBe(403);
   });
 
   it('rejects a mismatched state and a tampered transaction cookie', async () => {

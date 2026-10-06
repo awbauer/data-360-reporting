@@ -83,3 +83,15 @@ export const draft = {
   get: () => readJson<Draft | null>('d360:draft', null),
   set: (d: Draft) => writeJson('d360:draft', d),
 };
+
+/** A consumer key/secret the user chose to keep. `saved` is opaque ciphertext made by the server. */
+export interface SavedCredentials {
+  clientId: string;
+  saved: string;
+}
+
+export const savedCredentials = {
+  get: () => readJson<SavedCredentials | null>('d360:creds', null),
+  set: (v: SavedCredentials) => writeJson('d360:creds', v),
+  clear: () => removeKey('d360:creds'),
+};

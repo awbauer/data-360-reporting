@@ -22,17 +22,34 @@ type Env = { Variables: { session?: Session; holder?: SessionHolder; client?: Da
 
 const SESSION_COOKIE = 'd360_session';
 const TX_COOKIE = 'd360_oauth';
+const CRED_COOKIE = 'd360_cred';
+// Each sealed value is bound to its purpose, so one can't be replayed as another.
+const P = { session: 'session', tx: 'oauth-tx', cred: 'cred', saved: 'saved-cred' } as const;
 const SESSION_TTL = 60 * 60 * 24 * 7;
 const TX_TTL = 600;
+const SAVED_TTL = 60 * 60 * 24 * 180;
 const DATASPACE_RE = /^[A-Za-z0-9_]{1,80}$/;
 const QUERY_ID_RE = /^[A-Za-z0-9%._~=+-]{1,512}$/;
 const CLIENT_ID_RE = /^[A-Za-z0-9._-]{10,256}$/;
+const CLIENT_SECRET_RE = /^\S{8,256}$/;
+
+interface Credentials {
+  clientId: string;
+  clientSecret?: string;
+}
 
 const paramDef = z.object({
   name: z.string(),
   type: z.enum(['string', 'integer', 'number', 'boolean', 'date', 'timestamp']),
   label: z.string().optional(),
   default: z.string().optional(),
+});
+const credentialsBody = z.object({
+  clientId: z.string().trim().regex(CLIENT_ID_RE, 'That does not look like a consumer key').optional(),
+  clientSecret: z.string().regex(CLIENT_SECRET_RE, 'That does not look like a consumer secret').optional(),
+  /** An encrypted blob previously returned by this endpoint. */
+  saved: z.string().max(4096).optional(),
+  remember: z.boolean().default(false),
 });
 const queryBody = z.object({
   sql: z.string().min(1).max(200_000),
@@ -75,14 +92,14 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient }: AppDep
   app.use('*', async (c, next) => {
     const token = getCookie(c, SESSION_COOKIE);
     if (token) {
-      const s = await unseal<Session>(config.sessionKey, token);
+      const s = await unseal<Session>(config.sessionKey, token, P.session);
       if (s) c.set('session', s);
     }
     await next();
   });
 
   const startSession = async (c: Context<Env>, session: Session) =>
-    setCookie(c, SESSION_COOKIE, await seal(config.sessionKey, session, SESSION_TTL), { ...cookieOpts, maxAge: SESSION_TTL });
+    setCookie(c, SESSION_COOKIE, await seal(config.sessionKey, session, SESSION_TTL, P.session), { ...cookieOpts, maxAge: SESSION_TTL });
 
   // ------------------------------------------------------------------ auth
 
@@ -107,24 +124,56 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient }: AppDep
           : env === 'custom'
             ? assertAllowedOrigin(c.req.query('domain') ?? '', config.allowedHostSuffixes)
             : config.loginUrl;
-      const override = c.req.query('clientId')?.trim();
-      if (override && !CLIENT_ID_RE.test(override)) return fail('That does not look like a consumer key');
-      const clientId = override || config.clientId;
+      // Credentials the user entered (set just before by POST /auth/credentials) override the app's own.
+      const credToken = getCookie(c, CRED_COOKIE);
+      deleteCookie(c, CRED_COOKIE, { path: '/' });
+      const cred = credToken ? await unseal<Credentials>(config.sessionKey, credToken, P.cred) : null;
+      const clientId = cred?.clientId ?? config.clientId;
       if (!clientId) return fail('No consumer key configured. Enter one under Advanced.');
       const verifier = randomToken(48);
-      const tx: OAuthTx = { verifier, state: randomToken(24), loginHost, clientId };
-      setCookie(c, TX_COOKIE, await seal(config.sessionKey, tx, TX_TTL), { ...cookieOpts, maxAge: TX_TTL });
+      const tx: OAuthTx = {
+        verifier,
+        state: randomToken(24),
+        loginHost,
+        clientId,
+        ...(cred?.clientSecret ? { clientSecret: cred.clientSecret } : {}),
+      };
+      setCookie(c, TX_COOKIE, await seal(config.sessionKey, tx, TX_TTL, P.tx), { ...cookieOpts, maxAge: TX_TTL });
       return c.redirect(authorizeUrl(config, tx, await pkceChallenge(verifier)));
     } catch (e) {
       return fail(e instanceof HostNotAllowedError ? e.message : 'Could not start login');
     }
   });
 
+  /**
+   * Accepts the user's own consumer key/secret, either typed or as a blob saved earlier, and
+   * parks them in a short-lived sealed cookie for the login redirect that follows. The secret
+   * is never in a URL and never stored server-side. With `remember`, the secret is returned only
+   * as an AES-GCM blob the browser can keep: it is unreadable without this server's SESSION_KEY.
+   */
+  app.post('/auth/credentials', async (c) => {
+    const body = credentialsBody.parse(await c.req.json());
+    let cred: Credentials | null;
+    if (body.saved) {
+      cred = await unseal<Credentials>(config.sessionKey, body.saved, P.saved);
+      if (!cred) return c.json({ error: 'saved_unreadable', message: 'Saved credentials can no longer be read. Enter them again.' }, 400);
+    } else {
+      if (!body.clientId) return c.json({ error: 'bad_request', message: 'Enter a consumer key' }, 400);
+      cred = { clientId: body.clientId, ...(body.clientSecret ? { clientSecret: body.clientSecret } : {}) };
+    }
+    setCookie(c, CRED_COOKIE, await seal(config.sessionKey, cred, TX_TTL, P.cred), { ...cookieOpts, maxAge: TX_TTL });
+    return c.json({
+      clientId: cred.clientId,
+      hasSecret: Boolean(cred.clientSecret),
+      ...(body.remember && !body.saved ? { saved: await seal(config.sessionKey, cred, SAVED_TTL, P.saved) } : {}),
+    });
+  });
+
   app.get('/auth/callback', async (c) => {
     const fail = (message: string) => c.redirect(`/?error=${encodeURIComponent(message)}`);
     const token = getCookie(c, TX_COOKIE);
     deleteCookie(c, TX_COOKIE, { path: '/' });
-    const tx = token ? await unseal<OAuthTx>(config.sessionKey, token) : null;
+    const tx = token ? await unseal<OAuthTx>(config.sessionKey, token, P.tx) : null;
     const { code, state, error, error_description: description } = c.req.query();
     if (error) return fail(description || error);
     if (!tx || !code || !state || state !== tx.state) return fail('Login expired or was tampered with. Try again.');

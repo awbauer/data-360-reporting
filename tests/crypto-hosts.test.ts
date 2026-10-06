@@ -14,8 +14,14 @@ describe('seal/unseal', () => {
     const flipped = t.slice(0, -2) + (t.endsWith('AA') ? 'BB' : 'AA');
     expect(await unseal(KEY, flipped)).toBeNull();
     expect(await unseal('x'.repeat(32), t)).toBeNull();
-    expect(await unseal(KEY, t, Date.now() + 61_000)).toBeNull();
+    expect(await unseal(KEY, t, '', Date.now() + 61_000)).toBeNull();
     expect(await unseal(KEY, 'garbage')).toBeNull();
+  });
+  it('binds ciphertext to its purpose', async () => {
+    const t = await seal(KEY, { a: 1 }, 60, 'saved-cred');
+    expect(await unseal(KEY, t, 'saved-cred')).toEqual({ a: 1 });
+    expect(await unseal(KEY, t, 'session')).toBeNull();
+    expect(await unseal(KEY, t)).toBeNull();
   });
   it('computes the RFC 7636 S256 example challenge', async () => {
     expect(await pkceChallenge('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk')).toBe(

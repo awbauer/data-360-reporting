@@ -30,7 +30,12 @@ Data 360 is reached through the **Connect REST API** on the org's own `instance_
 2. Set `SF_CLIENT_ID` (and optionally `SF_CLIENT_SECRET`), `APP_BASE_URL` and `SESSION_KEY` (see `.env.example`).
 3. Users need **View Data 360** (or equivalent) access, and permission to the data spaces they pick.
 
-**One app, many orgs?** An External Client App only authorizes the org that owns it. To let users connect other orgs, either package and install the app in each org, or have users paste that org's own consumer key under **Advanced** on the Connect screen. Keys supplied this way sign in with PKCE only; the server's client secret is never sent with them.
+**One app, many orgs?** An External Client App only authorizes the org that owns it. To connect another org, users can enter that org's own **consumer key** (and **secret**, if the app requires one) under *Your own External Client App* on the Connect screen:
+
+- The credentials go to the server in a POST body, never a URL, and are parked in a 10-minute sealed cookie for the login redirect. The secret then lives only inside the encrypted session cookie (needed for token refresh). Nothing is stored server-side.
+- With **Remember on this device**, the browser keeps a blob that the server encrypted with AES-GCM under `SESSION_KEY`. It is unreadable without the server, expires after 180 days, and is bound to its purpose so it can't be replayed as a session. **Forget** deletes it. Rotating `SESSION_KEY` invalidates every saved blob and session; users just re-enter their credentials.
+- Without a secret the app signs in with PKCE alone. The server's own `SF_CLIENT_SECRET` is never sent with a user-supplied key.
+- Anyone who can run JavaScript on the page (XSS) could use a saved blob against this server, which is one reason the CSP is strict. Prefer an app without a secret (PKCE only) where your org allows it.
 
 ### Verify against your org
 
@@ -85,7 +90,7 @@ The OAuth callback follows the hostname the Worker is reached on (`https://<host
 
 Security notes:
 
-- OAuth uses the web-server flow with PKCE and a state check; the transaction cookie lasts 10 minutes.
+- OAuth uses the web-server flow with PKCE and a state check; the transaction cookie lasts 10 minutes. Every sealed value (session, transaction, credentials, saved blob) is authenticated with its purpose, so one can't be substituted for another.
 - The server only calls hosts under `ALLOWED_SF_HOST_SUFFIXES` over HTTPS (login domain, `instance_url`), so a public deployment can't be used to reach arbitrary or internal addresses.
 - Mutating requests need an `X-D360` header (CSRF guard); there is no CORS. A strict CSP is set.
 - Query ids and data space names are validated before being used in upstream URLs.

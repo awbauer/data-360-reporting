@@ -12,11 +12,21 @@ async function importKey(secret: string): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 
-export async function seal(secret: string, payload: unknown, ttlSeconds: number, now = Date.now()): Promise<string> {
+/**
+ * `purpose` is authenticated as AES-GCM additional data, so a token sealed for one use
+ * (say a saved credential) can't be replayed into another (a session cookie).
+ */
+export async function seal(
+  secret: string,
+  payload: unknown,
+  ttlSeconds: number,
+  purpose = '',
+  now = Date.now(),
+): Promise<string> {
   const key = await importKey(secret);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const body = enc.encode(JSON.stringify({ exp: Math.floor(now / 1000) + ttlSeconds, d: payload }));
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, body));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: enc.encode(purpose) }, key, body));
   const out = new Uint8Array(iv.length + ct.length);
   out.set(iv);
   out.set(ct, iv.length);
@@ -24,12 +34,12 @@ export async function seal(secret: string, payload: unknown, ttlSeconds: number,
 }
 
 /** Returns null for anything tampered, malformed, wrongly keyed or expired. */
-export async function unseal<T>(secret: string, token: string, now = Date.now()): Promise<T | null> {
+export async function unseal<T>(secret: string, token: string, purpose = '', now = Date.now()): Promise<T | null> {
   try {
     const bytes = new Uint8Array(Buffer.from(token, 'base64url'));
     if (bytes.length < 13 + 16) return null;
     const key = await importKey(secret);
-    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.slice(0, 12) }, key, bytes.slice(12));
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.slice(0, 12), additionalData: enc.encode(purpose) }, key, bytes.slice(12));
     const { exp, d } = JSON.parse(dec.decode(pt)) as { exp: number; d: T };
     return exp * 1000 > now ? d : null;
   } catch {
