@@ -1,4 +1,4 @@
-import type { CellValue, DataSpace, ObjectMeta, QueryChunk, QueryColumn, QueryResponse } from '../../shared/types';
+import type { CellValue, DataSpace, Extras, ObjectMeta, QueryChunk, QueryColumn, QueryResponse } from '../../shared/types';
 import type { SqlParameter } from '../../shared/sql';
 
 export interface SubmitQueryInput {
@@ -29,6 +29,8 @@ export interface PageResult extends QueryChunk {
 export interface Data360Client {
   listDataSpaces(): Promise<DataSpace[]>;
   getMetadata(dataspace: string): Promise<MetadataResult>;
+  /** Data streams (org-wide) and segments (per data space); each side fails independently. */
+  getExtras(dataspace: string): Promise<Extras>;
   submitQuery(input: SubmitQueryInput): Promise<QueryResponse>;
   getStatus(queryId: string, dataspace: string, waitMs: number): Promise<QueryStatus>;
   getRows(queryId: string, dataspace: string, offset: number, limit: number): Promise<PageResult>;

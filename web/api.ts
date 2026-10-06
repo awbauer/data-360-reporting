@@ -1,4 +1,4 @@
-import type { DataSpace, ObjectMeta, ParamDef, QueryChunk, QueryColumn, QueryResponse } from '@shared/types';
+import type { DataSpace, Extras, ObjectMeta, ParamDef, QueryChunk, QueryColumn, QueryResponse } from '@shared/types';
 
 export class ApiError extends Error {
   constructor(
@@ -77,6 +77,7 @@ export const api = {
   dataspaces: () => request<DataSpace[]>('/api/dataspaces'),
   metadata: (dataspace: string) =>
     request<{ objects: ObjectMeta[]; warnings: string[] }>(`/api/metadata?dataspace=${enc(dataspace)}`),
+  extras: (dataspace: string) => request<Extras>(`/api/extras?dataspace=${enc(dataspace)}`),
   submit: (input: RunInput) => request<QueryResponse>('/api/query', { method: 'POST', json: input }),
   status: (id: string, dataspace: string, waitMs: number, signal?: AbortSignal) =>
     request<QueryStatus>(`/api/query/${enc(id)}?dataspace=${enc(dataspace)}&wait=${waitMs}`, { signal }),

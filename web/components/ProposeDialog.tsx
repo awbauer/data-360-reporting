@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { ParamDef } from '@shared/types';
 import { buildProposal } from '../lib/github';
 
@@ -13,6 +13,7 @@ interface Props {
 /** Turns the current query into a library file and hands it to GitHub as a pull request. */
 export function ProposeDialog({ open, onClose, sql, paramDefs, dataspace }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [tags, setTags] = useState('');
@@ -49,9 +50,9 @@ export function ProposeDialog({ open, onClose, sql, paramDefs, dataspace }: Prop
   };
 
   return (
-    <dialog ref={ref} onClose={onClose} onCancel={(e) => { e.preventDefault(); onClose(); }}>
+    <dialog ref={ref} aria-labelledby={titleId} onClose={onClose} onCancel={(e) => { e.preventDefault(); onClose(); }}>
       <div className="dlg">
-        <h2>Propose for the shared library</h2>
+        <h2 id={titleId}>Propose for the shared library</h2>
         <p className="muted small" style={{ margin: 0 }}>
           The library lives in the repository, so changes go through a GitHub pull request. This opens GitHub with the file pre-filled.
         </p>

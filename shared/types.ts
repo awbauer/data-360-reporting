@@ -84,3 +84,35 @@ export interface ApiError {
   error: string;
   message: string;
 }
+
+export interface StreamInfo {
+  name: string;
+  label: string;
+  status?: string;
+  lastRunStatus?: string;
+  lastRefreshDate?: string;
+  totalRecords?: number;
+}
+
+export interface SegmentInfo {
+  apiName: string;
+  label: string;
+  status?: string;
+  publishStatus?: string;
+  lastMemberCount?: number;
+  lastPublished?: string;
+}
+
+/** A best-effort list: `truncated` means there were more than we fetched. */
+export interface Listing<T> {
+  total: number;
+  truncated: boolean;
+  items: T[];
+}
+
+/** Data streams and segments. Each side is null when its endpoint failed (see `errors`). */
+export interface Extras {
+  dataStreams: Listing<StreamInfo> | null;
+  segments: Listing<SegmentInfo> | null;
+  errors: string[];
+}

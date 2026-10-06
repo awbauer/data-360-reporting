@@ -1,7 +1,15 @@
 import type { Config } from '../config';
 import { refreshSession, type FetchLike, type Session } from '../oauth';
 import type { ObjectKind } from '../../shared/types';
-import { normalizeDataSpaces, normalizeMetadata, normalizePage, normalizeStatus, normalizeSubmit } from './normalize';
+import {
+  normalizeDataSpaces,
+  normalizeMetadata,
+  normalizePage,
+  normalizeSegments,
+  normalizeStatus,
+  normalizeStreams,
+  normalizeSubmit,
+} from './normalize';
 import { UpstreamError, type Data360Client } from './types';
 
 /** Mutable holder so a token refresh can be written back to the cookie. */
@@ -91,6 +99,45 @@ export function createConnectClient(
       const failed = results.flatMap((r, i) => (r.status === 'rejected' ? [[ENTITY_TYPES[i]![0], r.reason as Error] as const] : []));
       if (failed.length === results.length) throw failed[0]![1];
       return { objects, warnings: failed.map(([t, e]) => `${t}: ${e.message}`) };
+    },
+
+    async getExtras(dataspace) {
+      const errors: string[] = [];
+      const PAGE = 200;
+      const CAP = 1000;
+
+      const streams = async () => {
+        const items: ReturnType<typeof normalizeStreams>['items'] = [];
+        let total: number | undefined;
+        while (items.length < CAP) {
+          const page = normalizeStreams(await call('GET', `/data-streams${qs({ limit: PAGE, offset: items.length })}`));
+          total = page.totalSize ?? total;
+          items.push(...page.items);
+          if (page.items.length < PAGE || (total !== undefined && items.length >= total)) break;
+        }
+        return { total: total ?? items.length, truncated: (total ?? items.length) > items.length, items };
+      };
+
+      const segments = async () => {
+        const items: ReturnType<typeof normalizeSegments> = [];
+        let more = false;
+        while (items.length < CAP) {
+          const page = normalizeSegments(await call('GET', `/segments${qs({ dataspace, batchSize: PAGE, offset: items.length })}`));
+          items.push(...page);
+          more = page.length === PAGE;
+          if (!more) break;
+        }
+        return { total: items.length, truncated: more, items };
+      };
+
+      const [s, g] = await Promise.allSettled([streams(), segments()]);
+      if (s.status === 'rejected') errors.push(`Data streams: ${(s.reason as Error).message}`);
+      if (g.status === 'rejected') errors.push(`Segments: ${(g.reason as Error).message}`);
+      return {
+        dataStreams: s.status === 'fulfilled' ? s.value : null,
+        segments: g.status === 'fulfilled' ? g.value : null,
+        errors,
+      };
     },
 
     async submitQuery({ sql, dataspace, params, rowLimit }) {

@@ -298,6 +298,44 @@ describe('Connect API client', () => {
     expect(status.searchParams.get('waitTimeMs')).toBe('5000');
   });
 
+  it('pages data streams and segments, and reports one side failing', async () => {
+    const stream = (i: number) => ({ name: `S${i}`, label: `Stream ${i}`, status: 'ACTIVE', lastRunStatus: 'SUCCESS', totalRecords: i });
+    const { fetchFn, calls } = fakeSalesforce((c) => {
+      if (c.url.includes('/data-streams')) {
+        const offset = Number(new URL(c.url).searchParams.get('offset'));
+        const n = offset === 0 ? 200 : 50;
+        return json({ dataStreams: Array.from({ length: n }, (_, i) => stream(offset + i)), totalSize: 250 });
+      }
+      if (c.url.includes('/segments')) return json([{ errorCode: 'FORBIDDEN', message: 'no segment access' }], 403);
+      return base(c);
+    });
+    const { req } = await connect(fetchFn);
+    const x = await (await req('/api/extras?dataspace=marketing')).json();
+    expect(x.dataStreams).toMatchObject({ total: 250, truncated: false });
+    expect(x.dataStreams.items).toHaveLength(250);
+    expect(x.segments).toBeNull();
+    expect(x.errors).toEqual(['Segments: no segment access']);
+    const seg = calls.find((c) => c.url.includes('/segments'))!;
+    expect(new URL(seg.url).searchParams.get('dataspace')).toBe('marketing');
+    expect(new URL(seg.url).searchParams.get('batchSize')).toBe('200');
+  });
+
+  it('reads segment fields and keeps paging while pages are full', async () => {
+    const seg = (i: number) => ({ apiName: `Seg_${i}`, displayName: `Segment ${i}`, segmentStatus: 'ACTIVE', publishStatus: 'PUBLISH_SUCCESS', lastSegmentMemberCount: i });
+    const { fetchFn } = fakeSalesforce((c) => {
+      if (c.url.includes('/data-streams')) return json({ dataStreams: [], totalSize: 0 });
+      if (c.url.includes('/segments')) {
+        const offset = Number(new URL(c.url).searchParams.get('offset'));
+        return json({ segments: Array.from({ length: offset === 0 ? 200 : 7 }, (_, i) => seg(offset + i)) });
+      }
+      return base(c);
+    });
+    const { req } = await connect(fetchFn);
+    const x = await (await req('/api/extras?dataspace=default')).json();
+    expect(x.segments.total).toBe(207);
+    expect(x.segments.items[3]).toMatchObject({ apiName: 'Seg_3', label: 'Segment 3', lastMemberCount: 3, status: 'ACTIVE' });
+  });
+
   it('cancels with DELETE', async () => {
     const { fetchFn, calls } = fakeSalesforce((c) => (c.method === 'DELETE' ? new Response(null, { status: 200 }) : base(c)));
     const { req } = await connect(fetchFn);

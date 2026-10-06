@@ -10,6 +10,7 @@
  * tokens or row values, so the output is safe to paste into an issue.
  */
 import { execFileSync } from 'node:child_process';
+import { buildDateHistogramSql, buildNumericHistogramSql, buildRangeSql, parseRange, chooseNumericBuckets, chooseDateUnit } from '../shared/histogram';
 import { loadConfig } from '../server/config';
 import { createConnectClient, type SessionHolder } from '../server/data360/client';
 import { UpstreamError } from '../server/data360/types';
@@ -125,6 +126,38 @@ if (!target) {
     const r = await client.submitQuery({ sql: q(10), dataspace, params: [], rowLimit: 1 });
     await client.cancel(r.queryId, dataspace);
   });
+}
+
+await step(`Data streams and segments (${dataspace})`, async () => {
+  const x = await client.getExtras(dataspace);
+  console.log(`   dataStreams=${x.dataStreams ? `${x.dataStreams.items.length}/${x.dataStreams.total}` : 'unavailable'} segments=${x.segments ? `${x.segments.items.length}${x.segments.truncated ? '+' : ''}` : 'unavailable'}`);
+  for (const e of x.errors) throw new Error(e);
+});
+
+// Histograms rely on FLOOR(...) and DATE_TRUNC(...) in Data 360 SQL; confirm both are accepted.
+if (target) {
+  for (const [label, types] of [['numeric', ['NUMBER']], ['date', ['DATE', 'DATE_TIME']]] as [string, string[]][]) {
+    const field = target.fields.find((f) => types.includes(f.type));
+    if (!field) {
+      console.log(`\n▶ Histogram (${label}): skipped, ${target.name} has no ${label} field`);
+      continue;
+    }
+    await step(`Histogram (${label}) on ${target.name}.${field.name}`, async () => {
+      const run = async (sql: string) => {
+        const r = await client.submitQuery({ sql, dataspace, params: [] });
+        // Aggregates return few rows, so the first chunk is the whole result.
+        return r.rows;
+      };
+      const range = parseRange((await run(buildRangeSql(target, field.name)))[0] ?? []);
+      console.log(`   non-null=${range.nonNull} total=${range.total} min/max types=${typeof range.min}/${typeof range.max}`);
+      if (range.nonNull === 0) return console.log('   (no values; skipped the bucket query)');
+      const sql = label === 'numeric'
+        ? buildNumericHistogramSql(target, field.name, chooseNumericBuckets(Number(range.min), Number(range.max)))
+        : buildDateHistogramSql(target, field.name, chooseDateUnit(range.min, range.max));
+      const rows = await run(sql);
+      console.log(`   buckets returned=${rows.length}; first bucket value type=${typeof rows[0]?.[0]}`);
+    });
+  }
 }
 
 console.log(`\n${failures ? `✗ ${failures} step(s) failed` : '✓ all steps passed'}`);
