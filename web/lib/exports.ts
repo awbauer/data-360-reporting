@@ -1,3 +1,5 @@
+import { effectiveRates, type RateOverrides } from '@shared/credits';
+import { planTables, summarizePlan, type Plan, type PlanContext } from '@shared/plan';
 import type { CachedStats, ReportContext } from '@shared/report';
 import type { Extras, ObjectMeta } from '@shared/types';
 import { countCache, profileCache } from './storage';
@@ -23,7 +25,7 @@ const BOM = '\uFEFF';
 const slug = (s: string) => s.replace(/[^A-Za-z0-9.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 const fileBase = (kind: string, ctx: ReportContext) => `${kind}_${slug(ctx.host)}_${slug(ctx.dataspace)}_${ctx.at.toISOString().slice(0, 10)}`;
 
-function save(data: BlobPart, type: string, filename: string): void {
+export function save(data: BlobPart, type: string, filename: string): void {
   const url = URL.createObjectURL(new Blob([data], { type }));
   const a = document.createElement('a');
   a.href = url;
@@ -60,4 +62,23 @@ export async function exportHealth(
   const base = fileBase('health-check', ctx);
   if (format === 'md') save(report.reportMarkdown(r), 'text/markdown;charset=utf-8', `${base}.md`);
   else save(report.reportHtml(r), 'text/html;charset=utf-8', `${base}.html`);
+}
+
+/** The credit plan as a workbook (one sheet per table) or Markdown, with every assumption written down. */
+export async function exportPlan(
+  format: 'xlsx' | 'md',
+  plan: Plan,
+  overrides: RateOverrides,
+  ctx: PlanContext,
+): Promise<void> {
+  const rates = effectiveRates(overrides);
+  const tables = planTables(plan, summarizePlan(plan, rates), rates, overrides, ctx);
+  const base = `credit-plan_${slug(ctx.host ?? 'no-org')}_${ctx.at.toISOString().slice(0, 10)}`;
+  if (format === 'md') {
+    const { tablesToMarkdown } = await import('@shared/report');
+    return save(tablesToMarkdown(plan.name, tables), 'text/markdown;charset=utf-8', `${base}.md`);
+  }
+  const { buildXlsx } = await import('@shared/xlsx');
+  const bytes = buildXlsx(tables.map((t) => ({ name: t.title.slice(0, 31), header: t.header, rows: t.rows })));
+  save(bytes as Uint8Array<ArrayBuffer>, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', `${base}.xlsx`);
 }

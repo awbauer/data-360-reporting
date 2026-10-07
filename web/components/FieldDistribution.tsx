@@ -52,6 +52,8 @@ export function FieldDistribution({ obj, field, dataspace, profile, totalRows }:
   const range = useRef<Range | null>(null);
   const seq = useRef(0);
   const lastKey = useRef('');
+  // Each scan reads the object once; record that when its size is known.
+  const est = totalRows !== undefined ? { estRows: totalRows, estComplete: true } : {};
 
   useEffect(() => {
     const key = `${view}|${bins}|${unit}`;
@@ -65,7 +67,7 @@ export function FieldDistribution({ obj, field, dataspace, profile, totalRows }:
     (async () => {
       try {
         if (view === 'top') {
-          const r = await runToCompletion({ sql: buildTopValuesSql(obj, field.name, 10), dataspace }, { maxRows: 10 });
+          const r = await runToCompletion({ sql: buildTopValuesSql(obj, field.name, 10), dataspace, ...est }, { maxRows: 10 });
           if (fresh()) setLoad({ status: 'top', rows: r.rows });
           return;
         }
@@ -73,7 +75,7 @@ export function FieldDistribution({ obj, field, dataspace, profile, totalRows }:
           if (profile && profile.min !== undefined && profile.max !== undefined && totalRows !== undefined) {
             range.current = { min: profile.min, max: profile.max, nonNull: profile.nonNull, total: totalRows };
           } else {
-            const r = await runToCompletion({ sql: buildRangeSql(obj, field.name), dataspace }, { maxRows: 1 });
+            const r = await runToCompletion({ sql: buildRangeSql(obj, field.name), dataspace, ...est }, { maxRows: 1 });
             range.current = parseRange(r.rows[0] ?? []);
           }
         }
@@ -86,12 +88,12 @@ export function FieldDistribution({ obj, field, dataspace, profile, totalRows }:
         let note: string;
         if (date) {
           const u = unit === 'auto' ? chooseDateUnit(rg.min, rg.max) : unit;
-          const r = await runToCompletion({ sql: buildDateHistogramSql(obj, field.name, u), dataspace }, { maxRows: 5000 });
+          const r = await runToCompletion({ sql: buildDateHistogramSql(obj, field.name, u), dataspace, ...est }, { maxRows: 5000 });
           bars = dateBars(rg.min, rg.max, u, r.rows);
           note = `bucketed by ${u}`;
         } else {
           const b = chooseNumericBuckets(Number(rg.min), Number(rg.max), bins);
-          const r = await runToCompletion({ sql: buildNumericHistogramSql(obj, field.name, b), dataspace }, { maxRows: 5000 });
+          const r = await runToCompletion({ sql: buildNumericHistogramSql(obj, field.name, b), dataspace, ...est }, { maxRows: 5000 });
           bars = numericBars(b, r.rows);
           note = b.step === 1 ? 'one bucket per value' : `buckets of ${fmtNum(b.step)}`;
         }

@@ -50,7 +50,7 @@ test('sign in → connect → explore → query → library → admin → discon
   await page.getByPlaceholder(/Search \d+ objects/).fill('individual');
   await page.locator('.obj-item', { hasText: 'Individual' }).first().click();
   await expect(page.getByRole('heading', { name: 'Individual', exact: true })).toBeVisible();
-  await expect(page.getByText('2,500 rows')).toBeVisible(); // from the cached count
+  await expect(page.locator('.kv, .obj-head, main').getByText('2,500 rows', { exact: true }).first()).toBeVisible(); // from the cached count
   await page.getByRole('button', { name: 'Profile fields' }).click();
   await page.getByRole('button', { name: 'Run 1 query' }).click();
   await expect(page.getByText(/profiled just now/)).toBeVisible({ timeout: 20_000 });
@@ -135,7 +135,7 @@ test('sign in → connect → explore → query → library → admin → discon
   await expect(vip).toContainText('312');
   await expect(vip.getByRole('link', { name: 'Unified Individual' })).toBeVisible();
   await vip.getByRole('button', { name: 'rules' }).click();
-  await expect(page.getByText(/Publishes daily · next /)).toBeVisible();
+  await expect(page.getByText(/Publishes every 24 hours · next /)).toBeVisible();
   await expect(page.locator('pre.sql').first()).toContainText('"operator": "greaterThan"');
   await expect(page.getByRole('row', { name: /Draft Test/ }).getByRole('button', { name: 'rules' })).toBeDisabled();
 
@@ -163,6 +163,12 @@ test('sign in → connect → explore → query → library → admin → discon
   await page.getByRole('button', { name: 'Preview 100 rows' }).click();
   await expect(status).toContainText('100 rows', { timeout: 20_000 });
   await expect(panel(page).locator('[role=row]').nth(1)).toContainText('IND-');
+
+  // The editor estimates what the query reads from counts already cached: no query needed to know
+  const chip = panel(page).locator('span.est');
+  await expect(chip).toContainText('est. ≈ <0.01 credits'); // 2,500 rows at 3 credits per million
+  await expect(chip).toHaveAttribute('title', /Reads up to 2,500 rows, about <0\.01 credits at 3 credits per million rows/);
+  await expect(chip).toHaveAttribute('title', /Salesforce reports no credit usage/);
 
   // Autocomplete from metadata
   await setSql(page, 'SELECT * FROM ssot__Ind');
@@ -281,6 +287,15 @@ test('sign in → connect → explore → query → library → admin → discon
   await expect(page.locator('table.t tbody tr', { hasText: 'overview' }).first()).toBeVisible();
   await expect(page.locator('table.t tbody tr', { hasText: 'explorer' }).first()).toBeVisible();
   await expect(page.locator('table.t tbody tr', { hasText: 'failed' }).first()).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Est. credits' })).toBeVisible();
+  await expect(page.getByText(/carried a cost estimate, about .* credits in total/)).toBeVisible();
+  await expect(page.locator('table.t tbody tr', { hasText: '<0.01' }).first()).toBeVisible(); // the Preview run carried its estimate
+
+  // Usage: estimated reads by person and org, with its limits stated
+  await page.getByRole('navigation', { name: 'Admin' }).getByRole('link', { name: 'Usage' }).click();
+  await expect(page.getByText('counts only queries run here')).toBeVisible();
+  await expect(page.locator('table.t tbody tr', { hasText: 'demo@example.com' })).toContainText('mock-org.my.salesforce.com');
+  await expect(page.getByText(/estimated credits/).first()).toBeVisible();
 
   // Users: block someone, and their open session stops working at once
   const other = await browser.newContext({ baseURL: 'http://localhost:4173' });
@@ -304,6 +319,55 @@ test('sign in → connect → explore → query → library → admin → discon
   await page.getByLabel('Outcome').selectOption('blocked');
   await expect(page.locator('table.t tbody tr').first()).toContainText('colleague@example.com');
   await other.close();
+
+  // Plan: start from what the org reports, correct it, and see what dominates
+  await page.getByRole('link', { name: 'Plan', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Credit plan' })).toBeVisible();
+  await expect(page.getByText('The rates are unverified defaults.')).toBeVisible();
+  await page.getByRole('button', { name: 'Fill from this org' }).click();
+  await expect(page.getByText(/Read 7 lines from the org/)).toBeVisible();
+  await expect(page.getByText(/Not read: activation, data transforms/)).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Lines (7)' })).toBeVisible();
+  // Unification is the most expensive rate, so it leads the biggest lines
+  await expect(page.locator('ol li').first()).toContainText('Identity resolution: Individual Match');
+  // A stream's last run and refresh frequency set rows and runs: 120 rows, hourly
+  // (descriptions live in inputs, so the row is found through its labelled controls)
+  const webRows = page.getByLabel('Rows per run for Stream: Web SDK Events');
+  const web = page.locator('tr', { has: webRows });
+  await expect(webRows).toHaveValue('120');
+  await expect(page.getByLabel('Runs per month for Stream: Web SDK Events')).toHaveValue('720');
+  await expect(web).toContainText('172.8'); // 120 rows × 2,000 credits per million × 720 runs
+  // Rows can be typed the way people say them
+  await webRows.fill('2.5m');
+  await webRows.blur();
+  await expect(webRows).toHaveValue('2,500,000');
+  await expect(web).toContainText('3.6M'); // 2.5M rows × 2,000 per million × 720 runs
+  // Growth compounds into the projection
+  await page.getByLabel('Growth per month, %').fill('10');
+  await expect(page.getByRole('group', { name: /Projected credits per month over 12 months/ })).toBeVisible();
+  // Rates: set a price and confirm them; the warning goes and costs appear
+  await expect(page.getByLabel('Credits per million rows for Data queries')).toBeVisible(); // open by default while the rates are unconfirmed
+  await page.getByLabel('Credits per million rows for Data queries').fill('2');
+  await page.getByLabel('Price per credit (optional)').fill('0.005');
+  await page.getByLabel(/I've checked these rates against the customer's contract/).check();
+  await page.getByRole('button', { name: 'Save rates' }).click();
+  await expect(page.getByText('The rates are unverified defaults.')).toHaveCount(0);
+  await expect(page.getByText(/credits in the first month · \$/)).toBeVisible();
+  // Exports carry the assumptions
+  const [planXlsx] = await Promise.all([page.waitForEvent('download'), page.getByRole('group', { name: 'Export plan' }).getByRole('button', { name: 'Excel' }).click()]);
+  expect(planXlsx.suggestedFilename()).toMatch(/^credit-plan_mock-org\.my\.salesforce\.com_\d{4}-\d{2}-\d{2}\.xlsx$/);
+  const [planMd] = await Promise.all([page.waitForEvent('download'), page.getByRole('group', { name: 'Export plan' }).getByRole('button', { name: 'Markdown' }).click()]);
+  const planText = (await import('node:fs')).readFileSync((await planMd.path())!, 'utf8');
+  expect(planText).toContain('Confirmed against the customer contract');
+  expect(planText).not.toContain('UNVERIFIED');
+  expect(planText).toContain('not a quote');
+  expect(planText).toContain('| Identity unification | Identity resolution: Individual Match |');
+  // The plan and the rates persist: reload and they're still there
+  await page.waitForTimeout(1500); // saved to the account 1.2s after the last edit
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Lines (7)' })).toBeVisible();
+  await expect(page.getByLabel('Rows per run for Stream: Web SDK Events')).toHaveValue('2,500,000');
+  await expect(page.getByText('The rates are unverified defaults.')).toHaveCount(0);
 
   // Data space switch re-reads metadata
   await page.getByRole('link', { name: 'Overview' }).click();

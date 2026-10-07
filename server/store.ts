@@ -23,6 +23,10 @@ export interface RunRecord {
   error: string | null;
   startedAt: number;
   finishedAt: number | null;
+  /** The browser's estimate of rows the run reads (see shared/estimate.ts); null when it had none. */
+  estRows: number | null;
+  /** False when estRows is only a lower bound because some object's size was unknown. */
+  estComplete: boolean | null;
 }
 
 interface RunRow {
@@ -43,6 +47,8 @@ interface RunRow {
   error: string | null;
   started_at: number;
   finished_at: number | null;
+  est_rows: number | null;
+  est_complete: number | null;
 }
 
 const fromRow = (r: RunRow): RunRecord => ({
@@ -63,6 +69,8 @@ const fromRow = (r: RunRow): RunRecord => ({
   error: r.error,
   startedAt: r.started_at,
   finishedAt: r.finished_at,
+  estRows: r.est_rows,
+  estComplete: r.est_complete === null ? null : r.est_complete === 1,
 });
 
 export interface AuditFilter {
@@ -79,12 +87,13 @@ export function createStore(db: SqlDatabase) {
       await db
         .prepare(
           `insert into query_log (id, user_id, user_email, instance_host, sf_org_id, sf_user_id, dataspace, source, sql_text,
-             param_defs, params, query_id, status, row_count, error, started_at, finished_at)
-           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             param_defs, params, query_id, status, row_count, error, started_at, finished_at, est_rows, est_complete)
+           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           r.id, r.userId, r.userEmail, r.instanceHost, r.sfOrgId, r.sfUserId, r.dataspace, r.source, r.sql,
           JSON.stringify(r.paramDefs), JSON.stringify(r.params), r.queryId, r.status, r.rowCount, r.error, r.startedAt, r.finishedAt,
+          r.estRows, r.estComplete === null ? null : r.estComplete ? 1 : 0,
         )
         .run();
     },
@@ -132,6 +141,35 @@ export function createStore(db: SqlDatabase) {
         .bind(...args, f.limit)
         .all<RunRow>();
       return results.map(fromRow);
+    },
+
+    /**
+     * Estimated rows read, by person and org, since `since`. Sums only runs that had an estimate;
+     * `estimated` of `runs` says how much of the picture that is.
+     */
+    async usage(since: number): Promise<UsageRow[]> {
+      const { results } = await db
+        .prepare(
+          `select user_email, instance_host, count(*) as runs,
+                  sum(case when est_rows is not null then 1 else 0 end) as estimated,
+                  sum(case when est_complete = 0 then 1 else 0 end) as partial,
+                  coalesce(sum(est_rows), 0) as est_rows,
+                  min(started_at) as first_at, max(started_at) as last_at
+           from query_log where started_at >= ?
+           group by user_email, instance_host order by est_rows desc, runs desc`,
+        )
+        .bind(since)
+        .all<{ user_email: string; instance_host: string; runs: number; estimated: number; partial: number; est_rows: number; first_at: number; last_at: number }>();
+      return results.map((r) => ({
+        userEmail: r.user_email,
+        instanceHost: r.instance_host,
+        runs: r.runs,
+        estimatedRuns: r.estimated,
+        partialRuns: r.partial,
+        estRows: r.est_rows,
+        firstAt: r.first_at,
+        lastAt: r.last_at,
+      }));
     },
 
     async purgeRuns(olderThan: number): Promise<number> {
@@ -208,6 +246,19 @@ export function createStore(db: SqlDatabase) {
 }
 
 export type Store = ReturnType<typeof createStore>;
+
+export interface UsageRow {
+  userEmail: string;
+  instanceHost: string;
+  runs: number;
+  /** Runs that carried an estimate (the rest read objects the browser had never counted). */
+  estimatedRuns: number;
+  /** Of those, runs whose estimate is only a lower bound. */
+  partialRuns: number;
+  estRows: number;
+  firstAt: number;
+  lastAt: number;
+}
 
 /** Enough of a consumer key to tell saved connections apart; the page never needs the whole key. */
 export function maskClientId(id: string): string {

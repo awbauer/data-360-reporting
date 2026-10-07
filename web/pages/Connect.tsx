@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, type SessionInfo } from '../api';
 import { UserMenu } from '../components/UserMenu';
 import { useUrlError } from './SignIn';
@@ -212,6 +213,9 @@ export function Connect({ session }: { session: SessionInfo }) {
         <button className="primary" type="submit" disabled={!canConnect}>
           {session.mock ? 'Start with sample data' : busy ? 'Connecting…' : saved ? `Connect to ${saved.label}` : 'Connect to Salesforce'}
         </button>
+        <div className="small muted" style={{ textAlign: 'center' }}>
+          Sizing a project that isn't in an org yet? <Link to="/plan">Plan credit consumption without connecting</Link>
+        </div>
       </form>
     </div>
   );

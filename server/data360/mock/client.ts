@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import type { DatabaseSync as DatabaseSyncType, SQLInputValue } from 'node:sqlite';
 import { DATE_UNITS, parseTimestamp, truncate, type DateUnit } from '../../../shared/histogram';
 import type { CellValue, Extras, QueryColumn } from '../../../shared/types';
-import { normalizeDataSpaces, normalizeInsight, normalizeMappings, normalizeMetadata } from '../normalize';
+import { normalizeDataSpaces, normalizeIdentityResolutions, normalizeInsight, normalizeMappings, normalizeMetadata } from '../normalize';
 import { UpstreamError, type Data360Client } from '../types';
 import { DATA_SPACES, INSIGHTS, MAPPINGS, MARKETING_OBJECTS, METADATA } from './fixtures';
 
@@ -175,15 +175,15 @@ export function createMockClient(): Data360Client {
 
     async getExtras(dataspace): Promise<Extras> {
       const streams = [
-        { name: 'Salesforce_CRM_Contact', label: 'Salesforce CRM Contact', status: 'ACTIVE', lastRunStatus: 'SUCCESS', lastRefreshDate: '2026-10-05T04:10:00Z', totalRecords: 2500, dataLakeObject: 'Contact_Home__dll' },
-        { name: 'Web_SDK_Events', label: 'Web SDK Events', status: 'ACTIVE', lastRunStatus: 'SUCCESS', lastRefreshDate: '2026-10-06T01:00:00Z', totalRecords: 5000 },
-        { name: 'Ecommerce_Orders', label: 'Ecommerce Orders', status: 'ACTIVE', lastRunStatus: 'FAILED', lastRefreshDate: '2026-10-03T22:30:00Z', totalRecords: 1200 },
+        { name: 'Salesforce_CRM_Contact', label: 'Salesforce CRM Contact', status: 'ACTIVE', lastRunStatus: 'SUCCESS', lastRefreshDate: '2026-10-05T04:10:00Z', totalRecords: 2500, lastProcessedRecords: 2500, lastAddedRecords: 40, refreshMode: 'UPSERT', refreshFrequency: 'Daily', dataLakeObject: 'Contact_Home__dll' },
+        { name: 'Web_SDK_Events', label: 'Web SDK Events', status: 'ACTIVE', lastRunStatus: 'SUCCESS', lastRefreshDate: '2026-10-06T01:00:00Z', totalRecords: 5000, lastProcessedRecords: 120, refreshMode: 'INCREMENTAL', refreshFrequency: 'Hourly' },
+        { name: 'Ecommerce_Orders', label: 'Ecommerce Orders', status: 'ACTIVE', lastRunStatus: 'FAILED', lastRefreshDate: '2026-10-03T22:30:00Z', totalRecords: 1200, refreshMode: 'TOTAL_REPLACE', refreshFrequency: 'Weekly' },
       ];
       const segments = [
         {
           apiName: 'Lapsed_VIPs', label: 'Lapsed VIPs', status: 'ACTIVE', publishStatus: 'PUBLISH_SUCCESS', lastMemberCount: 312,
           lastPublished: '2026-10-05T12:00:00Z', description: 'High earners with no email engagement in 90 days.', segmentOn: 'UnifiedIndividual__dlm',
-          segmentType: 'UI', publishInterval: 'DAILY', nextPublish: '2026-10-08T06:00:00Z',
+          segmentType: 'UI', publishInterval: 'TWENTY_FOUR', nextPublish: '2026-10-08T06:00:00Z',
           includeCriteria: JSON.stringify({ filters: [{ object: 'ssot__Individual__dlm', field: 'ssot__YearlyIncome__c', operator: 'greaterThan', value: '100000' }] }),
           excludeCriteria: JSON.stringify({ filters: [{ object: 'ssot__EmailEngagement__dlm', field: 'ssot__EngagementDateTime__c', operator: 'lastNDays', value: '90' }] }),
         },
@@ -206,6 +206,22 @@ export function createMockClient(): Data360Client {
         ),
       };
       return normalizeMappings(raw);
+    },
+
+    async getIdentityResolutions() {
+      // Counts come from the seeded link table, so they agree with what the identity queries return.
+      const row = db.prepare('SELECT COUNT(*) AS s, COUNT(DISTINCT "UnifiedRecordId__c") AS u FROM "IndividualIdentityLink__dlm"').get() as { s: number; u: number };
+      return normalizeIdentityResolutions({
+        identityResolutions: [
+          {
+            label: 'Individual Match', rulesetId: null, rulesetStatus: 'PUBLISHED', objectApiName: 'Individual', dataSpaceName: 'default',
+            doesRunAutomatically: true, lastJobStatus: 'SUCCESS', lastJobCompleted: '2026-10-06T22:18:44.000Z', configurationType: 'individual',
+            sourceProfiles: row.s, matchedSourceProfiles: row.s - row.u, totalUnifiedProfiles: row.u, knownUnifiedProfiles: row.u,
+            anonymousUnifiedProfiles: 0, consolidationRate: 1 - row.u / row.s,
+            reconciliationRules: [{ entityName: 'ssot__Individual__dlm', linkDmoName: 'IndividualIdentityLink__dlm', unifiedDmoName: 'UnifiedIndividual__dlm' }],
+          },
+        ],
+      });
     },
 
     async getCalculatedInsight(name) {

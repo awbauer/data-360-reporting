@@ -2,7 +2,9 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, type AuditEntry } from '../api';
+import { creditsFor, fmtCredits } from '@shared/credits';
 import { fmtMs, fmtNum } from '../lib/format';
+import { useRates } from '../lib/useRates';
 
 const PAGE = 200;
 
@@ -24,6 +26,9 @@ export function AuditPage() {
     staleTime: 0,
   });
   const rows = log.data?.pages.flat() ?? [];
+  const { rates } = useRates();
+  const estimated = rows.filter((r) => r.estRows !== null);
+  const totalCredits = creditsFor(estimated.reduce((n, r) => n + (r.estRows ?? 0), 0), rates.query);
 
   return (
     <>
@@ -48,6 +53,13 @@ export function AuditPage() {
         <label className="small">Org host <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="any org" /></label>
         <button type="submit">Filter</button>
       </form>
+      {rows.length > 0 && (
+        <div className="small muted">
+          {rows.length} runs shown; {estimated.length} carried a cost estimate, about {fmtCredits(totalCredits)} credits in total
+          {estimated.some((r) => r.estComplete === false) ? ' (at least: some estimates are lower bounds)' : ''}. Estimated by the workbench from row
+          counts, not reported by Salesforce.
+        </div>
+      )}
       {log.error && <div className="alert error">{log.error.message}</div>}
       {log.isSuccess && !rows.length && <div className="alert">Nothing recorded yet.</div>}
       {rows.length > 0 && (
@@ -56,7 +68,8 @@ export function AuditPage() {
             <thead>
               <tr>
                 <th>When</th><th>User</th><th>Org</th><th>Data space</th><th>From</th><th>Status</th>
-                <th style={{ textAlign: 'right' }}>Rows</th><th style={{ textAlign: 'right' }}>Time</th><th>SQL</th>
+                <th style={{ textAlign: 'right' }}>Rows</th><th style={{ textAlign: 'right' }}>Time</th>
+                <th style={{ textAlign: 'right' }} title="Estimated from cached row counts; not a measurement">Est. credits</th><th>SQL</th>
               </tr>
             </thead>
             <tbody>
@@ -70,6 +83,9 @@ export function AuditPage() {
                   <td style={r.status === 'failed' ? { color: 'var(--bad)' } : undefined} title={r.error ?? undefined}>{r.status}</td>
                   <td style={{ textAlign: 'right' }}>{r.rowCount === null ? '' : fmtNum(r.rowCount)}</td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{r.finishedAt ? fmtMs(r.finishedAt - r.startedAt) : ''}</td>
+                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    {r.estRows === null ? <span className="muted">–</span> : `${r.estComplete ? '' : '≥ '}${fmtCredits(creditsFor(r.estRows, rates.query))}`}
+                  </td>
                   <td style={{ maxWidth: 480 }}>
                     <button className="link" onClick={() => setOpen(open === r.id ? null : r.id)} aria-expanded={open === r.id}>
                       <code>{r.sql.length > 80 && open !== r.id ? `${r.sql.slice(0, 79)}…` : open === r.id ? 'Hide' : r.sql}</code>

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Suspense, lazy, useEffect } from 'react';
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { api, type SessionInfo } from './api';
 import { UserMenu } from './components/UserMenu';
 import { WorkbenchProvider, useWorkbench } from './context';
@@ -11,6 +11,7 @@ import { Explorer } from './pages/Explorer';
 import { HistoryPage } from './pages/History';
 import { LibraryPage } from './pages/Library';
 import { Overview } from './pages/Overview';
+import { PlanConnected, PlanPage } from './pages/Plan';
 import { SegmentsPage } from './pages/Segments';
 import { NotAllowed, SignIn } from './pages/SignIn';
 
@@ -25,11 +26,36 @@ export function App() {
   const s = session.data;
   if (!s.user) return <SignIn session={s} />;
   if (!s.user.allowed || s.user.blocked) return <NotAllowed session={s} />;
-  if (!s.connected) return <Connect session={s} />;
+  if (!s.connected) {
+    // The planner needs no Salesforce connection: a consultant sizing a prospect has none to make.
+    return (
+      <Routes>
+        <Route path="/plan" element={<StandalonePlan session={s} />} />
+        <Route path="*" element={<Connect session={s} />} />
+      </Routes>
+    );
+  }
   return (
     <WorkbenchProvider session={s}>
       <Shell />
     </WorkbenchProvider>
+  );
+}
+
+function StandalonePlan({ session }: { session: SessionInfo }) {
+  return (
+    <div className="shell">
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden />
+          Data 360 Workbench
+        </div>
+        <Link to="/">← Connect to an org</Link>
+        <div className="grow" />
+        <UserMenu session={session} />
+      </header>
+      <main className="main"><PlanPage org={null} /></main>
+    </div>
   );
 }
 
@@ -56,6 +82,7 @@ function Shell() {
           <NavLink to="/explorer">Explorer</NavLink>
           <NavLink to="/segments">Segments</NavLink>
           <NavLink to="/query">Query</NavLink>
+          <NavLink to="/plan">Plan</NavLink>
           <NavLink to="/library">Library</NavLink>
           <NavLink to="/history">History</NavLink>
           {wb.session.user?.admin && <NavLink to="/admin">Admin</NavLink>}
@@ -82,6 +109,7 @@ function Shell() {
         <Route path="/explorer/*" element={<main className="main flush"><Explorer /></main>} />
         <Route path="/segments" element={<main className="main"><SegmentsPage /></main>} />
         <Route path="/query" element={<main className="main flush"><Suspense fallback={<div className="hint">Loading editor…</div>}><QueryPage /></Suspense></main>} />
+        <Route path="/plan" element={<main className="main"><PlanConnected /></main>} />
         <Route path="/library" element={<main className="main"><LibraryPage /></main>} />
         <Route path="/history" element={<main className="main"><HistoryPage /></main>} />
         {wb.session.user?.admin && <Route path="/admin/*" element={<main className="main"><AdminPage /></main>} />}

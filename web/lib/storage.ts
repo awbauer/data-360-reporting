@@ -39,15 +39,39 @@ export interface CachedCount {
 const cacheKey = (kind: string, host: string, dataspace: string, object: string) =>
   `d360:${kind}:${host}:${dataspace}:${object}`;
 
+// Row counts feed cost estimates elsewhere, so changes are announced (useSyncExternalStore reads these).
+let countsVersion = 0;
+const countListeners = new Set<() => void>();
+const countsChanged = () => {
+  countsVersion++;
+  countListeners.forEach((f) => f());
+};
+export const subscribeCounts = (f: () => void): (() => void) => {
+  countListeners.add(f);
+  return () => void countListeners.delete(f);
+};
+export const getCountsVersion = (): number => countsVersion;
+
 export const countCache = {
   get: (host: string, ds: string, obj: string) => readJson<CachedCount | null>(cacheKey('count', host, ds, obj), null),
-  set: (host: string, ds: string, obj: string, v: CachedCount) => writeJson(cacheKey('count', host, ds, obj), v),
+  set(host: string, ds: string, obj: string, v: CachedCount) {
+    writeJson(cacheKey('count', host, ds, obj), v);
+    countsChanged();
+  },
 };
 
 export const profileCache = {
   get: (host: string, ds: string, obj: string) => readJson<ObjectProfile | null>(cacheKey('profile', host, ds, obj), null),
-  set: (host: string, ds: string, obj: string, v: ObjectProfile) => writeJson(cacheKey('profile', host, ds, obj), v),
+  set(host: string, ds: string, obj: string, v: ObjectProfile) {
+    writeJson(cacheKey('profile', host, ds, obj), v);
+    countsChanged();
+  },
 };
+
+/** Rows we know an object has: a fresh count, else the row total from its last profile. */
+export function knownRows(host: string, ds: string, obj: string): number | undefined {
+  return countCache.get(host, ds, obj)?.rows ?? profileCache.get(host, ds, obj)?.rows;
+}
 
 export interface Draft {
   sql: string;

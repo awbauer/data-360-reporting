@@ -135,6 +135,10 @@ label > input, label > select, label > textarea { color: var(--text); font-size:
 .subnav a:hover { color: var(--text); text-decoration: none; }
 .subnav a.active { color: var(--accent); border-bottom-color: var(--accent); }
 button.danger { color: var(--bad); border-color: var(--bad); }
+div.tiles-inline { display: flex; gap: 32px; flex-wrap: wrap; }
+div.tiles-inline .num { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+div.tiles-inline .lbl { color: var(--muted); font-size: 12px; }
+span.est { color: var(--muted); font-size: 12px; border: 1px dashed var(--border); border-radius: 999px; padding: 1px 8px; cursor: help; white-space: nowrap; }
 dl.facts { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 0 0 10px; }
 dl.facts dt { color: var(--muted); font-size: 12px; }
 dl.facts dd { margin: 0; }

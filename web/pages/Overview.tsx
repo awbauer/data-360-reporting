@@ -8,6 +8,9 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useWorkbench } from '../context';
 import { fmtAgo, fmtNum } from '../lib/format';
 import { computeOverview } from '@shared/overview';
+import { creditsFor, fmtCredits, fmtMoney, fmtRows } from '@shared/credits';
+import { exampleCost } from '../lib/estimateText';
+import { useRates } from '../lib/useRates';
 import { exportDictionary, exportHealth, type DictionaryFormat, type HealthFormat } from '../lib/exports';
 import { useRowCounts } from '../lib/useRowCounts';
 
@@ -15,6 +18,7 @@ export function Overview() {
   const wb = useWorkbench();
   const stats = useMemo(() => computeOverview(wb.objects), [wb.objects]);
   const rc = useRowCounts(wb.session.instanceHost ?? '', wb.dataspace, wb.objects);
+  const { rates, price, currency } = useRates();
   const [confirm, setConfirm] = useState(false);
   const host = wb.session.instanceHost ?? '';
   // Streams and segments come from separate endpoints and fail independently of the model metadata.
@@ -172,7 +176,13 @@ export function Overview() {
       >
         <p style={{ margin: 0 }}>
           This runs <b>{countable.length} queries</b> (<code>SELECT COUNT(*)</code>, three at a time) against data space{' '}
-          <b>{wb.dataspace}</b>. Data 360 bills queries as consumption credits, so large objects can cost real money.
+          <b>{wb.dataspace}</b>.
+        </p>
+        <p className="small muted" style={{ margin: 0 }}>
+          {totalRows > 0
+            ? `Your cached counts add up to ${fmtRows(totalRows)} rows, so recounting reads about that many: roughly ${fmtCredits(creditsFor(totalRows, rates.query))} credits${price ? ` (${fmtMoney(creditsFor(totalRows, rates.query) * price, currency)})` : ''}. ${countable.length - counted.length} objects have never been counted.`
+            : `${exampleCost({ rate: rates.query, price, currency })}. Sizes are unknown until counted.`}{' '}
+          An estimate: Salesforce reports no credit usage.
         </p>
       </ConfirmDialog>
     </div>
