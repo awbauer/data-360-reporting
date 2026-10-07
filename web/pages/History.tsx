@@ -1,29 +1,42 @@
-import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { api } from '../api';
 import { fmtAgo, fmtMs, fmtNum } from '../lib/format';
-import { history } from '../lib/storage';
 import type { QueryNavState } from './Query';
 
 export function HistoryPage() {
   const nav = useNavigate();
-  const [items, setItems] = useState(() => history.list());
+  const qc = useQueryClient();
+  const items = useQuery({ queryKey: ['history'], queryFn: api.history, staleTime: 0 });
+  const clear = useMutation({
+    mutationFn: api.clearHistory,
+    onSuccess: () => qc.setQueryData(['history'], []),
+  });
+  const list = items.data ?? [];
 
   return (
     <div className="page">
       <div className="row">
         <div className="grow">
           <h1>History</h1>
-          <div className="muted small">Your last runs, stored only in this browser.</div>
+          <div className="muted small">
+            Your last runs from the editor, on any device. Clearing hides them here; the audit log keeps them.
+          </div>
         </div>
-        <button onClick={() => { history.clear(); setItems([]); }} disabled={!items.length}>Clear history</button>
+        <button onClick={() => clear.mutate()} disabled={!list.length || clear.isPending}>Clear history</button>
       </div>
-      {!items.length && <div className="alert">No queries run yet.</div>}
+      {items.isLoading && <div className="hint">Loading…</div>}
+      {items.error && <div className="alert error">{items.error.message}</div>}
+      {items.isSuccess && !list.length && <div className="alert">No queries run yet.</div>}
       <div className="stack" style={{ gap: 8 }}>
-        {items.map((h) => (
+        {list.map((h) => (
           <div className="card" key={h.id}>
             <div className="row wrap" style={{ marginBottom: 8 }}>
               <span className="muted small grow">
-                {fmtAgo(h.at)} · {h.dataspace} · {fmtNum(h.rows)} rows · {fmtMs(h.elapsedMs)}
+                {fmtAgo(h.at)} · {h.instanceHost} · {h.dataspace}
+                {h.status === 'done' && h.rows !== null && <> · {fmtNum(h.rows)} rows</>}
+                {h.elapsedMs !== null && <> · {fmtMs(h.elapsedMs)}</>}
+                {h.status !== 'done' && <> · <span style={h.status === 'failed' ? { color: 'var(--bad)' } : undefined}>{h.status}</span></>}
               </span>
               <button onClick={() => {
                 const state: QueryNavState = { sql: h.sql, dataspace: h.dataspace, paramDefs: h.paramDefs, params: h.params };
@@ -34,6 +47,7 @@ export function HistoryPage() {
                 nav('/query', { state });
               }}>Run again</button>
             </div>
+            {h.error && <div className="alert error small" style={{ marginBottom: 8 }}>{h.error}</div>}
             <pre className="sql" style={{ maxHeight: 140 }}>{h.sql}</pre>
           </div>
         ))}

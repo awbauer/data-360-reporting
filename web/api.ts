@@ -31,26 +31,77 @@ async function request<T>(path: string, init: RequestInit & { json?: unknown } =
   return body as T;
 }
 
+export interface AppUserInfo {
+  email: string;
+  name: string;
+  image: string | null;
+  allowed: boolean;
+  admin: boolean;
+}
+
+export type Provider = 'github' | 'google';
+
 export interface SessionInfo {
+  /** Who is signed in to the app (Better Auth); null when signed out. */
+  user: AppUserInfo | null;
+  providers: Provider[];
+  /** Whether that user has a Salesforce connection. */
   connected: boolean;
   instanceHost: string | null;
   mock: boolean;
   defaultClientConfigured: boolean;
 }
 
-export interface CredentialsInput {
-  clientId?: string;
-  clientSecret?: string;
-  /** Ciphertext from an earlier `remember`. */
-  saved?: string;
-  remember?: boolean;
-}
+export type CredentialsInput =
+  | { savedId: string }
+  | { clientId: string; clientSecret?: string; remember?: boolean; label?: string };
 
 export interface CredentialsResult {
   clientId: string;
   hasSecret: boolean;
-  /** Present when `remember` was requested: encrypted by the server, safe to keep in localStorage. */
-  saved?: string;
+  /** Present when saved credentials were used or `remember` was requested. */
+  savedId?: string;
+}
+
+/** A consumer key (and maybe secret) the user saved; the secret never leaves the server. */
+export interface SavedCredential {
+  id: string;
+  label: string;
+  clientId: string;
+  hasSecret: boolean;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+
+export interface HistoryItem {
+  id: string;
+  at: string;
+  sql: string;
+  dataspace: string;
+  instanceHost: string;
+  paramDefs: ParamDef[];
+  params: Record<string, string>;
+  status: 'running' | 'done' | 'failed' | 'cancelled';
+  rows: number | null;
+  elapsedMs: number | null;
+  error: string | null;
+}
+
+export interface AuditEntry {
+  id: string;
+  userEmail: string;
+  instanceHost: string;
+  sfOrgId: string | null;
+  sfUserId: string | null;
+  dataspace: string;
+  source: string;
+  sql: string;
+  params: Record<string, string>;
+  status: HistoryItem['status'];
+  rowCount: number | null;
+  error: string | null;
+  startedAt: number;
+  finishedAt: number | null;
 }
 
 export interface QueryStatus {
@@ -65,15 +116,51 @@ export interface RunInput {
   dataspace: string;
   paramDefs?: ParamDef[];
   params?: Record<string, string>;
+  /** Where the run came from, for the audit log; History shows only `editor` runs. */
+  source?: 'editor' | 'explorer' | 'overview';
 }
 
 const enc = encodeURIComponent;
+
+/** App sign-in, served by Better Auth under /api/auth. */
+export const appAuth = {
+  /** Starts a GitHub/Google sign-in; the browser leaves the app. Errors come back as /?error=<code>. */
+  async social(provider: Provider) {
+    const { url } = await request<{ url: string }>('/api/auth/sign-in/social', {
+      method: 'POST',
+      json: { provider, callbackURL: '/', errorCallbackURL: '/' },
+    });
+    window.location.assign(url);
+  },
+  /** Mock mode only: a throwaway local account so the demo works without a provider. */
+  async demo() {
+    const creds = { email: 'demo@example.com', password: 'demo-password-not-secret' };
+    try {
+      await request('/api/auth/sign-in/email', { method: 'POST', json: creds });
+    } catch {
+      await request('/api/auth/sign-up/email', { method: 'POST', json: { ...creds, name: 'Demo user' } });
+    }
+  },
+  signOut: () => request<unknown>('/api/auth/sign-out', { method: 'POST', json: {} }),
+};
 
 export const api = {
   session: () => request<SessionInfo>('/api/session'),
   /** Park the user's own consumer key/secret in a short-lived sealed cookie before /auth/login. */
   credentials: (input: CredentialsInput) => request<CredentialsResult>('/auth/credentials', { method: 'POST', json: input }),
+  savedCredentials: () => request<SavedCredential[]>('/api/credentials'),
+  deleteCredential: (id: string) => request<{ ok: true }>(`/api/credentials/${enc(id)}`, { method: 'DELETE' }),
   logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
+  history: () => request<HistoryItem[]>('/api/history'),
+  clearHistory: () => request<{ ok: true }>('/api/history', { method: 'DELETE' }),
+  audit: (f: { email?: string; host?: string; before?: number }) => {
+    const q = new URLSearchParams(Object.entries(f).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)]));
+    return request<AuditEntry[]>(`/api/audit?${q}`);
+  },
+  auditCsvUrl: (f: { email?: string; host?: string }) =>
+    `/api/audit?${new URLSearchParams({ ...Object.fromEntries(Object.entries(f).filter(([, v]) => v)), format: 'csv', limit: '50000' })}`,
+  getState: <T>(key: 'tabs') => request<{ value: T; updatedAt: number } | null>(`/api/state/${key}`),
+  putState: (key: 'tabs', value: unknown) => request<{ ok: true }>(`/api/state/${key}`, { method: 'PUT', json: { value } }),
   dataspaces: () => request<DataSpace[]>('/api/dataspaces'),
   metadata: (dataspace: string) =>
     request<{ objects: ObjectMeta[]; warnings: string[] }>(`/api/metadata?dataspace=${enc(dataspace)}`),
@@ -107,7 +194,7 @@ export async function runToCompletion(
 ): Promise<CompletedQuery> {
   const maxRows = opts.maxRows ?? 5000;
   const started = performance.now();
-  const first = await api.submit(input);
+  const first = await api.submit({ source: 'explorer', ...input });
   let done = first.done;
   while (!done) {
     if (opts.signal?.aborted) {

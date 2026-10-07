@@ -9,6 +9,9 @@ export interface Session {
   clientId: string;
   /** Secret the user supplied for their own app; lives only inside the sealed session cookie. */
   clientSecret?: string;
+  /** From the token response's identity URL (…/id/<orgId>/<userId>), for the audit log. */
+  orgId?: string;
+  userId?: string;
   mock?: boolean;
 }
 
@@ -88,7 +91,14 @@ export async function exchangeCode(
     loginHost: tx.loginHost,
     clientId: tx.clientId,
     ...(tx.clientSecret ? { clientSecret: tx.clientSecret } : {}),
+    ...identityOf(json.id),
   };
+}
+
+/** Salesforce returns `id` as https://login.salesforce.com/id/<orgId>/<userId>. */
+export function identityOf(id: unknown): { orgId?: string; userId?: string } {
+  const m = typeof id === 'string' ? /\/id\/(00D[A-Za-z0-9]{12,15})\/(005[A-Za-z0-9]{12,15})$/.exec(id) : null;
+  return m ? { orgId: m[1]!, userId: m[2]! } : {};
 }
 
 /** Returns a refreshed session, or null when it can't be refreshed. */

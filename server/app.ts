@@ -2,12 +2,14 @@ import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { secureHeaders } from 'hono/secure-headers';
 import { z, ZodError } from 'zod';
+import { isAdmin, isAllowed, type AppUser, type Auth } from './auth';
 import type { Config } from './config';
 import { pkceChallenge, randomToken, seal, unseal } from './crypto';
 import { createConnectClient, type SessionHolder } from './data360/client';
 import { UpstreamError, type Data360Client } from './data360/types';
 import { assertAllowedOrigin, HostNotAllowedError } from './hosts';
 import { authorizeUrl, exchangeCode, OAuthError, revokeToken, type FetchLike, type OAuthTx, type Session } from './oauth';
+import type { RunRecord, Store } from './store';
 import { toSqlParameters } from '../shared/sql';
 import type { CellValue, ParamDef, QueryResponse } from '../shared/types';
 
@@ -16,18 +18,29 @@ export interface AppDeps {
   fetch?: FetchLike;
   /** Used for sessions created in mock mode. */
   mockClient?: Data360Client;
+  auth: Auth;
+  store: Store;
 }
 
-type Env = { Variables: { session?: Session; holder?: SessionHolder; client?: Data360Client } };
+type Env = { Variables: { user?: AppUser; session?: Session; holder?: SessionHolder; client?: Data360Client } };
 
 const SESSION_COOKIE = 'd360_session';
 const TX_COOKIE = 'd360_oauth';
 const CRED_COOKIE = 'd360_cred';
-// Each sealed value is bound to its purpose, so one can't be replayed as another.
-const P = { session: 'session', tx: 'oauth-tx', cred: 'cred', saved: 'saved-cred' } as const;
+// Each sealed value is bound to its purpose and to the signed-in user, so one can't be replayed
+// as another, and a Salesforce session left in a shared browser is useless to the next user.
+const P = {
+  session: (u: AppUser) => `session:${u.id}`,
+  tx: (u: AppUser) => `oauth-tx:${u.id}`,
+  cred: (u: AppUser) => `cred:${u.id}`,
+  saved: (u: AppUser, id: string) => `sf-cred:${u.id}:${id}`,
+};
 const SESSION_TTL = 60 * 60 * 24 * 7;
 const TX_TTL = 600;
-const SAVED_TTL = 60 * 60 * 24 * 180;
+const SAVED_TTL = 60 * 60 * 24 * 365 * 10;
+const MAX_SAVED_CREDENTIALS = 25;
+const MAX_STATE_BYTES = 512 * 1024;
+const STATE_KEYS = new Set(['tabs']);
 const DATASPACE_RE = /^[A-Za-z0-9_]{1,80}$/;
 const QUERY_ID_RE = /^[A-Za-z0-9%._~=+-]{1,512}$/;
 const CLIENT_ID_RE = /^[A-Za-z0-9._-]{10,256}$/;
@@ -44,21 +57,24 @@ const paramDef = z.object({
   label: z.string().optional(),
   default: z.string().optional(),
 });
-const credentialsBody = z.object({
-  clientId: z.string().trim().regex(CLIENT_ID_RE, 'That does not look like a consumer key').optional(),
+const credentialFields = {
+  clientId: z.string().trim().regex(CLIENT_ID_RE, 'That does not look like a consumer key'),
   clientSecret: z.string().regex(CLIENT_SECRET_RE, 'That does not look like a consumer secret').optional(),
-  /** An encrypted blob previously returned by this endpoint. */
-  saved: z.string().max(4096).optional(),
-  remember: z.boolean().default(false),
-});
+  label: z.string().trim().max(80).optional(),
+};
+const credentialsBody = z.union([
+  z.object({ savedId: z.string().uuid() }),
+  z.object({ ...credentialFields, remember: z.boolean().default(false) }),
+]);
 const queryBody = z.object({
   sql: z.string().min(1).max(200_000),
   dataspace: z.string().regex(DATASPACE_RE).default('default'),
   paramDefs: z.array(paramDef).max(100).default([]),
   params: z.record(z.string()).default({}),
+  source: z.enum(['editor', 'explorer', 'overview', 'library']).default('editor'),
 });
 
-export function createApp({ config, fetch: fetchFn = fetch, mockClient }: AppDeps): Hono<Env> {
+export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, store }: AppDeps): Hono<Env> {
   const app = new Hono<Env>();
   const cookieOpts = { httpOnly: true, secure: config.secureCookies, sameSite: 'Lax' as const, path: '/' };
 
@@ -81,6 +97,9 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient }: AppDep
     }),
   );
 
+  // App sign-in (Better Auth). It checks the Origin of its own POSTs against trustedOrigins.
+  app.on(['GET', 'POST'], '/api/auth/*', (c) => auth.handler(c.req.raw));
+
   // CSRF: state-changing requests must carry a custom header, which cross-site forms can't set.
   app.use('*', async (c, next) => {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(c.req.method) && c.req.header('x-d360') !== '1') {
@@ -89,30 +108,71 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient }: AppDep
     await next();
   });
 
+  // Who is signed in to the app, and their Salesforce session if they have connected one.
   app.use('*', async (c, next) => {
-    const token = getCookie(c, SESSION_COOKIE);
-    if (token) {
-      const s = await unseal<Session>(config.sessionKey, token, P.session);
-      if (s) c.set('session', s);
+    const { headers, response } = await auth.api.getSession({ headers: c.req.raw.headers, returnHeaders: true });
+    const user = response?.user;
+    if (user) {
+      const u: AppUser = { id: user.id, email: user.email.toLowerCase(), name: user.name, emailVerified: user.emailVerified, image: user.image ?? null };
+      c.set('user', u);
+      const token = getCookie(c, SESSION_COOKIE);
+      if (token) {
+        const s = await unseal<Session>(config.sessionKey, token, P.session(u));
+        if (s) c.set('session', s);
+      }
     }
     await next();
+    // Pass on any session-cookie refresh Better Auth made while reading the session.
+    for (const v of headers.getSetCookie()) c.res.headers.append('set-cookie', v);
   });
 
-  const startSession = async (c: Context<Env>, session: Session) =>
-    setCookie(c, SESSION_COOKIE, await seal(config.sessionKey, session, SESSION_TTL, P.session), { ...cookieOpts, maxAge: SESSION_TTL });
+  const startSession = async (c: Context<Env>, user: AppUser, session: Session) =>
+    setCookie(c, SESSION_COOKIE, await seal(config.sessionKey, session, SESSION_TTL, P.session(user)), { ...cookieOpts, maxAge: SESSION_TTL });
+
+  // ------------------------------------------------------------------ session (public)
+
+  app.get('/api/session', (c) => {
+    const s = c.get('session');
+    const u = c.get('user');
+    return c.json({
+      user: u ? { email: u.email, name: u.name, image: u.image ?? null, allowed: isAllowed(config, u), admin: isAdmin(config, u) } : null,
+      providers: [...(config.providers.github ? ['github'] : []), ...(config.providers.google ? ['google'] : [])],
+      connected: Boolean(s),
+      instanceHost: s ? new URL(s.instanceUrl).host : null,
+      mock: config.mock,
+      defaultClientConfigured: Boolean(config.clientId),
+    });
+  });
+
+  // Everything below needs a signed-in user on the allowlist.
+  const gate = (redirect: boolean) => async (c: Context<Env>, next: () => Promise<void>) => {
+    const u = c.get('user');
+    if (!u || !isAllowed(config, u)) {
+      const [code, message] = u
+        ? (['not_allowed', `${u.email} is not allowed to use this app.`] as const)
+        : (['unauthenticated', 'Sign in first.'] as const);
+      return redirect ? c.redirect(`/?error=${encodeURIComponent(message)}`) : c.json({ error: code, message }, u ? 403 : 401);
+    }
+    await next();
+  };
+  app.use('/auth/*', async (c, next) => gate(c.req.method === 'GET')(c, next));
+  app.use('/api/*', gate(false));
 
   // ------------------------------------------------------------------ auth
 
   app.get('/auth/login', async (c) => {
     const fail = (message: string) => c.redirect(`/?error=${encodeURIComponent(message)}`);
     try {
+      const user = c.get('user')!;
       if (config.mock) {
         if (!mockClient) return fail('Mock client is not configured');
-        await startSession(c, {
+        await startSession(c, user, {
           accessToken: 'mock',
           instanceUrl: 'https://mock-org.my.salesforce.com',
           loginHost: 'https://login.salesforce.com',
           clientId: 'mock',
+          orgId: '00D000000000001AAA',
+          userId: '005000000000001AAA',
           mock: true,
         });
         return c.redirect('/');
@@ -127,7 +187,7 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient }: AppDep
       // Credentials the user entered (set just before by POST /auth/credentials) override the app's own.
       const credToken = getCookie(c, CRED_COOKIE);
       deleteCookie(c, CRED_COOKIE, { path: '/' });
-      const cred = credToken ? await unseal<Credentials>(config.sessionKey, credToken, P.cred) : null;
+      const cred = credToken ? await unseal<Credentials>(config.sessionKey, credToken, P.cred(user)) : null;
       const clientId = cred?.clientId ?? config.clientId;
       if (!clientId) return fail('No consumer key configured. Enter one under Advanced.');
       const verifier = randomToken(48);
@@ -138,7 +198,7 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient }: AppDep
         clientId,
         ...(cred?.clientSecret ? { clientSecret: cred.clientSecret } : {}),
       };
-      setCookie(c, TX_COOKIE, await seal(config.sessionKey, tx, TX_TTL, P.tx), { ...cookieOpts, maxAge: TX_TTL });
+      setCookie(c, TX_COOKIE, await seal(config.sessionKey, tx, TX_TTL, P.tx(user)), { ...cookieOpts, maxAge: TX_TTL });
       return c.redirect(authorizeUrl(config, tx, await pkceChallenge(verifier)));
     } catch (e) {
       return fail(e instanceof HostNotAllowedError ? e.message : 'Could not start login');
@@ -146,39 +206,54 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient }: AppDep
   });
 
   /**
-   * Accepts the user's own consumer key/secret, either typed or as a blob saved earlier, and
-   * parks them in a short-lived sealed cookie for the login redirect that follows. The secret
-   * is never in a URL and never stored server-side. With `remember`, the secret is returned only
-   * as an AES-GCM blob the browser can keep: it is unreadable without this server's SESSION_KEY.
+   * Accepts the user's own consumer key/secret, typed or picked from their saved list, and parks
+   * them in a short-lived sealed cookie for the login redirect that follows. The secret is never
+   * in a URL. With `remember`, it is also saved to the database, encrypted with SESSION_KEY.
    */
   app.post('/auth/credentials', async (c) => {
+    const user = c.get('user')!;
     const body = credentialsBody.parse(await c.req.json());
-    let cred: Credentials | null;
-    if (body.saved) {
-      cred = await unseal<Credentials>(config.sessionKey, body.saved, P.saved);
-      if (!cred) return c.json({ error: 'saved_unreadable', message: 'Saved credentials can no longer be read. Enter them again.' }, 400);
+    let cred: Credentials;
+    let savedId: string | undefined;
+    if ('savedId' in body) {
+      const row = await store.getCredential(user.id, body.savedId);
+      if (!row) return c.json({ error: 'not_found', message: 'Those saved credentials no longer exist.' }, 404);
+      const secret = row.secretEnc ? await unseal<string>(config.sessionKey, row.secretEnc, P.saved(user, body.savedId)) : null;
+      if (row.secretEnc && !secret) {
+        return c.json({ error: 'saved_unreadable', message: 'The saved secret can no longer be decrypted (SESSION_KEY changed?). Delete it and save it again.' }, 400);
+      }
+      cred = { clientId: row.clientId, ...(secret ? { clientSecret: secret } : {}) };
+      savedId = body.savedId;
+      await store.touchCredential(user.id, savedId);
     } else {
-      if (!body.clientId) return c.json({ error: 'bad_request', message: 'Enter a consumer key' }, 400);
       cred = { clientId: body.clientId, ...(body.clientSecret ? { clientSecret: body.clientSecret } : {}) };
+      if (body.remember) savedId = await saveCredential(user, body);
     }
-    setCookie(c, CRED_COOKIE, await seal(config.sessionKey, cred, TX_TTL, P.cred), { ...cookieOpts, maxAge: TX_TTL });
-    return c.json({
-      clientId: cred.clientId,
-      hasSecret: Boolean(cred.clientSecret),
-      ...(body.remember && !body.saved ? { saved: await seal(config.sessionKey, cred, SAVED_TTL, P.saved) } : {}),
-    });
+    setCookie(c, CRED_COOKIE, await seal(config.sessionKey, cred, TX_TTL, P.cred(user)), { ...cookieOpts, maxAge: TX_TTL });
+    return c.json({ clientId: cred.clientId, hasSecret: Boolean(cred.clientSecret), ...(savedId ? { savedId } : {}) });
   });
+
+  const saveCredential = async (user: AppUser, b: { clientId: string; clientSecret?: string; label?: string }): Promise<string> => {
+    if ((await store.listCredentials(user.id)).length >= MAX_SAVED_CREDENTIALS) {
+      throw new RangeError(`You can save at most ${MAX_SAVED_CREDENTIALS} credentials. Delete one first.`);
+    }
+    const id = crypto.randomUUID();
+    const secretEnc = b.clientSecret ? await seal(config.sessionKey, b.clientSecret, SAVED_TTL, P.saved(user, id)) : null;
+    await store.saveCredential(user.id, { id, label: b.label || `${b.clientId.slice(0, 12)}…`, clientId: b.clientId, secretEnc });
+    return id;
+  };
 
   app.get('/auth/callback', async (c) => {
     const fail = (message: string) => c.redirect(`/?error=${encodeURIComponent(message)}`);
     const token = getCookie(c, TX_COOKIE);
     deleteCookie(c, TX_COOKIE, { path: '/' });
-    const tx = token ? await unseal<OAuthTx>(config.sessionKey, token, P.tx) : null;
+    const user = c.get('user')!;
+    const tx = token ? await unseal<OAuthTx>(config.sessionKey, token, P.tx(user)) : null;
     const { code, state, error, error_description: description } = c.req.query();
     if (error) return fail(description || error);
     if (!tx || !code || !state || state !== tx.state) return fail('Login expired or was tampered with. Try again.');
     try {
-      await startSession(c, await exchangeCode(config, fetchFn, tx, code));
+      await startSession(c, user, await exchangeCode(config, fetchFn, tx, code));
       return c.redirect('/');
     } catch (e) {
       return fail(e instanceof OAuthError || e instanceof HostNotAllowedError ? e.message : 'Login failed');
@@ -194,19 +269,70 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient }: AppDep
 
   // ------------------------------------------------------------------- api
 
-  app.get('/api/session', (c) => {
-    const s = c.get('session');
-    return c.json({
-      connected: Boolean(s),
-      instanceHost: s ? new URL(s.instanceUrl).host : null,
-      mock: config.mock,
-      defaultClientConfigured: Boolean(config.clientId),
+  // Routes that need the app user but not a Salesforce connection.
+
+  app.get('/api/history', async (c) => {
+    const limit = intOf(c.req.query('limit'), 50, 1, 200);
+    return c.json((await store.history(c.get('user')!.id, limit)).map(toHistoryItem));
+  });
+
+  app.delete('/api/history', async (c) => {
+    await store.hideHistory(c.get('user')!.id);
+    return c.json({ ok: true });
+  });
+
+  app.get('/api/audit', async (c) => {
+    if (!isAdmin(config, c.get('user')!)) return c.json({ error: 'forbidden', message: 'Admins only' }, 403);
+    const q = c.req.query();
+    const rows = await store.audit({
+      ...(q.email ? { email: q.email } : {}),
+      ...(q.host ? { host: q.host } : {}),
+      ...(q.before ? { before: intOf(q.before, 0, 0, Number.MAX_SAFE_INTEGER) } : {}),
+      limit: intOf(q.limit, 200, 1, q.format === 'csv' ? 50_000 : 500),
     });
+    if (q.format !== 'csv') return c.json(rows);
+    const header = ['started_at', 'user_email', 'instance_host', 'sf_org_id', 'sf_user_id', 'dataspace', 'source', 'status', 'row_count', 'duration_ms', 'error', 'sql', 'params'];
+    const lines = rows.map((r) => toCsvLine([
+      new Date(r.startedAt).toISOString(), r.userEmail, r.instanceHost, r.sfOrgId, r.sfUserId, r.dataspace, r.source, r.status,
+      r.rowCount, r.finishedAt ? r.finishedAt - r.startedAt : null, r.error, r.sql, JSON.stringify(r.params),
+    ]));
+    return new Response([toCsvLine(header), ...lines].join('\n') + '\n', {
+      headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="query-audit.csv"', 'cache-control': 'no-store' },
+    });
+  });
+
+  const stateKey = (c: Context<Env>) => {
+    const key = c.req.param('key') ?? '';
+    if (!STATE_KEYS.has(key)) throw new RangeError('Unknown state key');
+    return key;
+  };
+
+  app.get('/api/state/:key', async (c) => c.json(await store.getState(c.get('user')!.id, stateKey(c))));
+
+  app.put('/api/state/:key', async (c) => {
+    const key = stateKey(c);
+    const text = await c.req.text();
+    if (text.length > MAX_STATE_BYTES) return c.json({ error: 'too_large', message: 'Too much to save on the server' }, 413);
+    const { value } = z.object({ value: z.unknown() }).parse(JSON.parse(text));
+    await store.putState(c.get('user')!.id, key, JSON.stringify(value));
+    return c.json({ ok: true });
+  });
+
+  app.get('/api/credentials', async (c) => c.json(await store.listCredentials(c.get('user')!.id)));
+
+  app.post('/api/credentials', async (c) => {
+    const body = z.object(credentialFields).parse(await c.req.json());
+    return c.json({ id: await saveCredential(c.get('user')!, body) });
+  });
+
+  app.delete('/api/credentials/:id', async (c) => {
+    const ok = await store.deleteCredential(c.get('user')!.id, c.req.param('id'));
+    return ok ? c.json({ ok: true }) : c.json({ error: 'not_found', message: 'Not found' }, 404);
   });
 
   app.use('/api/*', async (c, next) => {
     const session = c.get('session');
-    if (!session) return c.json({ error: 'not_connected', message: 'Not connected' }, 401);
+    if (!session) return c.json({ error: 'not_connected', message: 'Not connected to Salesforce' }, 401);
     if (session.mock) {
       if (!mockClient) return c.json({ error: 'server_error', message: 'Mock client is not configured' }, 500);
       c.set('client', mockClient);
@@ -215,7 +341,7 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient }: AppDep
     const holder: SessionHolder = { current: session, refreshed: false };
     c.set('client', createConnectClient(config, fetchFn, holder));
     await next();
-    if (holder.refreshed) await startSession(c, holder.current);
+    if (holder.refreshed) await startSession(c, c.get('user')!, holder.current);
   });
 
   const dataspaceOf = (c: Context<Env>): string => {
@@ -228,11 +354,6 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient }: AppDep
     if (!QUERY_ID_RE.test(id)) throw new RangeError('Invalid query id');
     return id;
   };
-  const intOf = (v: string | undefined, fallback: number, min: number, max: number): number => {
-    const n = v === undefined ? fallback : Number(v);
-    if (!Number.isInteger(n) || n < min || n > max) throw new RangeError(`Expected an integer between ${min} and ${max}`);
-    return n;
-  };
 
   app.get('/api/dataspaces', async (c) => c.json(await c.get('client')!.listDataSpaces()));
 
@@ -243,19 +364,52 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient }: AppDep
   app.post('/api/query', async (c) => {
     const body = queryBody.parse(await c.req.json());
     const params = toSqlParameters(body.sql, body.paramDefs as ParamDef[], body.params);
+    const user = c.get('user')!;
+    const session = c.get('session')!;
     const started = Date.now();
-    const res = await c.get('client')!.submitQuery({
-      sql: body.sql,
+    // Recorded before anything reaches Salesforce: if the audit write fails, the query doesn't run.
+    const run: RunRecord = {
+      id: crypto.randomUUID(),
+      userId: user.id,
+      userEmail: user.email,
+      instanceHost: new URL(session.instanceUrl).host.toLowerCase(),
+      sfOrgId: session.orgId ?? null,
+      sfUserId: session.userId ?? null,
       dataspace: body.dataspace,
-      params,
-      rowLimit: config.firstChunkRows,
+      source: body.source,
+      sql: body.sql,
+      paramDefs: body.paramDefs as ParamDef[],
+      params: body.params,
+      queryId: null,
+      status: 'running',
+      rowCount: null,
+      error: null,
+      startedAt: started,
+      finishedAt: null,
+    };
+    await store.logRun(run);
+    let res;
+    try {
+      res = await c.get('client')!.submitQuery({ sql: body.sql, dataspace: body.dataspace, params, rowLimit: config.firstChunkRows });
+    } catch (e) {
+      await store.updateRun(run.id, { status: 'failed', error: (e as Error).message.slice(0, 2000), finishedAt: Date.now() });
+      throw e;
+    }
+    await store.updateRun(run.id, {
+      queryId: res.queryId,
+      status: res.done ? 'done' : 'running',
+      rowCount: res.done ? res.rowCount : null,
+      finishedAt: res.done ? Date.now() : null,
     });
     return c.json({ ...res, elapsedMs: Date.now() - started } satisfies QueryResponse);
   });
 
   app.get('/api/query/:id', async (c) => {
     const wait = intOf(c.req.query('wait'), 0, 0, 10_000);
-    return c.json(await c.get('client')!.getStatus(idOf(c), dataspaceOf(c), wait));
+    const id = idOf(c);
+    const status = await c.get('client')!.getStatus(id, dataspaceOf(c), wait);
+    if (status.done) await store.finishRun(c.get('user')!.id, id, 'done', status.rowCount);
+    return c.json(status);
   });
 
   app.get('/api/query/:id/rows', async (c) => {
@@ -265,7 +419,9 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient }: AppDep
   });
 
   app.delete('/api/query/:id', async (c) => {
-    await c.get('client')!.cancel(idOf(c), dataspaceOf(c));
+    const id = idOf(c);
+    await c.get('client')!.cancel(id, dataspaceOf(c));
+    await store.finishRun(c.get('user')!.id, id, 'cancelled', null);
     return c.json({ ok: true });
   });
 
@@ -344,6 +500,47 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient }: AppDep
   });
 
   return app;
+}
+
+function intOf(v: string | undefined, fallback: number, min: number, max: number): number {
+  const n = v === undefined || v === '' ? fallback : Number(v);
+  if (!Number.isInteger(n) || n < min || n > max) throw new RangeError(`Expected an integer between ${min} and ${max}`);
+  return n;
+}
+
+export interface HistoryItem {
+  id: string;
+  at: string;
+  sql: string;
+  dataspace: string;
+  instanceHost: string;
+  paramDefs: ParamDef[];
+  params: Record<string, string>;
+  status: RunRecord['status'];
+  rows: number | null;
+  elapsedMs: number | null;
+  error: string | null;
+}
+
+function toHistoryItem(r: RunRecord): HistoryItem {
+  return {
+    id: r.id,
+    at: new Date(r.startedAt).toISOString(),
+    sql: r.sql,
+    dataspace: r.dataspace,
+    instanceHost: r.instanceHost,
+    paramDefs: r.paramDefs,
+    params: r.params,
+    status: r.status,
+    rows: r.rowCount,
+    elapsedMs: r.finishedAt ? r.finishedAt - r.startedAt : null,
+    error: r.error,
+  };
+}
+
+/** Deletes audit entries past the retention window. Run daily (Worker cron / Node timer). */
+export async function purgeExpired(config: Config, store: Store, now = Date.now()): Promise<number> {
+  return store.purgeRuns(now - config.auditRetentionDays * 86_400_000);
 }
 
 // ------------------------------------------------------------------- csv

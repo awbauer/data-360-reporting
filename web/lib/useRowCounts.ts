@@ -24,7 +24,7 @@ export function useRowCounts(host: string, dataspace: string, objects: ObjectMet
 
   const countOne = useCallback(
     async (name: string, signal?: AbortSignal) => {
-      const res = await runToCompletion({ sql: buildRowCountSql({ name }), dataspace }, { signal, maxRows: 1 });
+      const res = await runToCompletion({ sql: buildRowCountSql({ name }), dataspace, source: 'overview' }, { signal, maxRows: 1 });
       const rows = Number(res.rows[0]?.[0] ?? 0);
       const entry = { rows, at: new Date().toISOString() };
       countCache.set(host, dataspace, name, entry);

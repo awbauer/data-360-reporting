@@ -142,36 +142,45 @@ describe('OAuth', () => {
     expect(jar.has('d360_cred')).toBe(false);
   });
 
-  it('returns an encrypted blob when asked to remember, and accepts it later', async () => {
+  it('saves remembered credentials encrypted in the database, and uses them by id later', async () => {
     const { fetchFn, calls } = fakeSalesforce((c) => (c.url.endsWith('/services/oauth2/token') ? tokenOk() : undefined));
-    const { app, prepare } = await withCredentials(fetchFn, { clientId: 'USERKEY12345678', clientSecret: 'user-secret-value', remember: true });
-    const saved = (prepare as { saved: string }).saved;
-    expect(saved).toBeTruthy();
-    expect(saved).not.toContain('user-secret-value');
-    expect(Buffer.from(saved, 'base64url').toString('utf8')).not.toContain('user-secret-value');
-    // A later visit presents only the blob.
+    const { app, prepare } = await withCredentials(fetchFn, { clientId: 'USERKEY12345678', clientSecret: 'user-secret-value', remember: true, label: 'Acme prod' });
+    const savedId = (prepare as { savedId: string }).savedId;
+    expect(savedId).toMatch(/^[0-9a-f-]{36}$/);
+    const row = await app.db.prepare('select * from sf_credentials where id = ?').bind(savedId).first<Record<string, string>>();
+    expect(row!.label).toBe('Acme prod');
+    expect(JSON.stringify(row)).not.toContain('user-secret-value');
+    const list = await (await app.request('/api/credentials')).json();
+    expect(list).toMatchObject([{ id: savedId, label: 'Acme prod', clientId: 'USERKEY12345678', hasSecret: true }]);
+    expect(JSON.stringify(list)).not.toContain('user-secret');
+    // A later visit presents only the id.
     const jar = cookieJar();
-    const res = await app.request('/auth/credentials', { method: 'POST', headers: H, body: JSON.stringify({ saved }) });
+    const res = await app.request('/auth/credentials', { method: 'POST', headers: H, body: JSON.stringify({ savedId }) });
     jar.absorb(res);
-    expect(await res.json()).toEqual({ clientId: 'USERKEY12345678', hasSecret: true });
+    expect(await res.json()).toEqual({ clientId: 'USERKEY12345678', hasSecret: true, savedId });
     await finishLogin(app, jar);
     expect(new URLSearchParams(calls[0]!.body).get('client_secret')).toBe('user-secret-value');
   });
 
-  it('rejects tampered or foreign blobs, and a blob used as a session or credential cookie', async () => {
+  it("keeps saved credentials per user, and can't decrypt a secret moved to another row or key", async () => {
     const { fetchFn } = fakeSalesforce(() => tokenOk());
     const { app, prepare } = await withCredentials(fetchFn, { clientId: 'USERKEY12345678', clientSecret: 'user-secret-value', remember: true });
-    const saved = (prepare as { saved: string }).saved;
-    const bad = await app.request('/auth/credentials', { method: 'POST', headers: H, body: JSON.stringify({ saved: saved.slice(0, -3) + 'AAA' }) });
-    expect(bad.status).toBe(400);
-    expect((await bad.json()).error).toBe('saved_unreadable');
-    // wrong purpose: the saved blob is not a session
-    const asSession = await app.request('/api/session', { headers: { cookie: `d360_session=${saved}` } });
-    expect((await asSession.json()).connected).toBe(false);
-    // and a different server key can't read it
-    const other = realApp(fetchFn, { SESSION_KEY: 'z'.repeat(40) });
-    const res = await other.request('/auth/credentials', { method: 'POST', headers: H, body: JSON.stringify({ saved }) });
-    expect(res.status).toBe(400);
+    const savedId = (prepare as { savedId: string }).savedId;
+    // Another user of the same deployment can neither see nor use it.
+    const bob = cookieJar();
+    await app.signIn(bob, 'bob@example.com');
+    expect(await (await app.send(bob, '/api/credentials')).json()).toEqual([]);
+    expect((await app.send(bob, '/auth/credentials', { method: 'POST', headers: H, body: JSON.stringify({ savedId }) })).status).toBe(404);
+    expect((await app.send(bob, `/api/credentials/${savedId}`, { method: 'DELETE', headers: H })).status).toBe(404);
+    // Ciphertext copied onto another row (even the same user's) fails to decrypt.
+    const enc = (await app.db.prepare('select secret_enc from sf_credentials where id = ?').bind(savedId).first<{ secret_enc: string }>())!.secret_enc;
+    const other = (await (await app.request('/api/credentials', { method: 'POST', headers: H, body: JSON.stringify({ clientId: 'USERKEY99999999', clientSecret: 'another-secret' }) })).json()).id;
+    await app.db.prepare('update sf_credentials set secret_enc = ? where id = ?').bind(enc, other).run();
+    const moved = await app.request('/auth/credentials', { method: 'POST', headers: H, body: JSON.stringify({ savedId: other }) });
+    expect(moved.status).toBe(400);
+    expect((await moved.json()).error).toBe('saved_unreadable');
+    // Deleting works for the owner.
+    expect((await app.request(`/api/credentials/${savedId}`, { method: 'DELETE', headers: H })).status).toBe(200);
   });
 
   it('validates typed credentials and requires the CSRF header', async () => {
@@ -181,6 +190,7 @@ describe('OAuth', () => {
     expect((await post({ clientId: 'short' })).status).toBe(400);
     expect((await post({ clientId: 'USERKEY12345678', clientSecret: 'has space in it' })).status).toBe(400);
     expect((await post({})).status).toBe(400);
+    expect((await post({ savedId: 'not-a-uuid' })).status).toBe(400);
     expect((await post({ clientId: 'USERKEY12345678' }, { 'content-type': 'application/json' })).status).toBe(403);
   });
 
