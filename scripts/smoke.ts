@@ -150,44 +150,65 @@ await step(`Data streams and segments (${dataspace})`, async () => {
   for (const e of x.errors) throw new Error(e);
 });
 
-// Mapping/lineage (#9) and insight definitions (#10) were written from the spec alone. These
-// print key names two levels deep so the normalizers can be checked against what ships.
+// Mapping/lineage (#9), insight definitions (#10) and identity resolution (#11) were written from the
+// spec's schemas and examples. These print key names so the normalizers can be checked against what ships.
+const authedGet = (path: string) =>
+  loggingFetch(`${instanceUrl}/services/data/${config.apiVersion}/ssot${path}`, {
+    headers: { authorization: `Bearer ${creds.accessToken}`, accept: 'application/json' },
+  });
+
 const dmo = meta?.objects.find((o) => o.kind === 'dmo' && o.category === 'Profile') ?? meta?.objects.find((o) => o.kind === 'dmo');
 if (dmo) {
-  await step(`Mappings into ${dmo.name}`, async () => {
-    const m = await client.getMappings(dataspace, dmo.name, 'dmo');
+  const maps = await step(`Mappings into ${dmo.name}`, async () => {
+    const m = await client.getMappings(dataspace, dmo.name);
     console.log(`   raw: ${shapeDeep(m.raw)}`);
     console.log(`   normalized: ${m.mappings.length} mapping(s), ${m.mappings.reduce((n, x) => n + x.fields.length, 0)} field pair(s)`);
     const src = m.mappings[0]?.source;
     if (src && meta?.objects.some((o) => o.name === src)) console.log('   source names match metadata names');
     else if (src) console.log(`   source "${src}" is not a metadata object name: check suffixes (__dll)`);
+    return m;
   });
-}
-const dlo = meta?.objects.find((o) => o.kind === 'dlo');
-if (dlo) {
-  await step(`Mappings out of ${dlo.name}`, async () => {
-    const m = await client.getMappings(dataspace, dlo.name, 'dlo');
-    console.log(`   raw: ${shapeDeep(m.raw)}`);
-    console.log(`   normalized: ${m.mappings.length} mapping(s)`);
+  const first = maps?.mappings[0];
+  if (first) {
+    await step(`Mappings into ${dmo.name}, narrowed to ${first.source}`, async () => {
+      const m = await client.getMappings(dataspace, dmo.name, first.source);
+      console.log(`   normalized: ${m.mappings.length} mapping(s) (expected at least 1, all from ${first.source}: ${m.mappings.every((x) => x.source === first.source)})`);
+    });
+  }
+  // The spec marks dmoDeveloperName as required, so there is no lookup by DLO alone. Confirm.
+  await step('Mappings without a DMO (expected to be rejected)', async () => {
+    const res = await authedGet(`/data-model-object-mappings?dataspace=${dataspace}`);
+    console.log(`   HTTP ${res.status} (expected 400: the spec marks dmoDeveloperName required)`);
   });
 }
 const insight = meta?.objects.find((o) => o.kind === 'ci');
 if (insight) {
   await step(`Calculated insight definition ${insight.name}`, async () => {
-    const d = await client.getCalculatedInsight(dataspace, insight.name);
+    const d = await client.getCalculatedInsight(insight.name);
     console.log(`   raw: ${shapeDeep(d.raw)}`);
-    console.log(`   normalized: expression=${Boolean(d.expression)} status=${d.status ?? '-'} dims=${d.dimensions.length} measures=${d.measures.length}`);
+    console.log(`   normalized: expression=${Boolean(d.expression)} status=${d.status ?? '-'} lastRunAt=${d.lastRunAt ?? '-'} dims=${d.dimensions.length} measures=${d.measures.length} formulas=${[...d.dimensions, ...d.measures].filter((f) => f.formula).length}`);
   });
 }
 
-// Identity resolution library queries (#11) assume these object names.
-await step('Identity resolution objects present', async () => {
+await step('Identity resolution rulesets (/ssot/identity-resolutions)', async () => {
+  const res = await authedGet('/identity-resolutions');
+  const body = (await res.json().catch(() => ({}))) as { identityResolutions?: Record<string, unknown>[] };
+  const sets = body.identityResolutions ?? [];
+  console.log(`   rulesets=${sets.length}`);
   const names = new Set(meta?.objects.map((o) => o.name));
-  for (const n of ['UnifiedIndividual__dlm', 'IndividualIdentityLink__dlm']) console.log(`   ${n}: ${names.has(n) ? 'found' : 'MISSING'}`);
+  for (const r of sets) {
+    console.log(`   - status=${String(r.rulesetStatus)} lastJob=${String(r.lastJobStatus)} sourceProfiles=${String(r.sourceProfiles)} unified=${String(r.totalUnifiedProfiles)} consolidationRate=${String(r.consolidationRate)}`);
+    for (const rr of (r.reconciliationRules ?? []) as { entityName?: string; linkDmoName?: string; unifiedDmoName?: string }[]) {
+      const seen = (n?: string) => (n ? (names.has(n) ? 'in metadata' : 'NOT in metadata') : '-');
+      console.log(`     ${rr.entityName}: link=${rr.linkDmoName} (${seen(rr.linkDmoName)}) unified=${rr.unifiedDmoName} (${seen(rr.unifiedDmoName)})`);
+    }
+  }
+  // The library's identity queries assume the default names; a ruleset using others needs them edited.
   const link = meta?.objects.find((o) => o.name === 'IndividualIdentityLink__dlm');
-  if (link) console.log(`   link fields: ${link.fields.map((f) => f.name).join(', ')}`);
-  const unifiedLike = meta?.objects.filter((o) => /unified/i.test(o.name)).map((o) => o.name) ?? [];
-  console.log(`   objects named *Unified*: ${unifiedLike.join(', ') || 'none'}`);
+  console.log(`   library queries assume IndividualIdentityLink__dlm: ${link ? 'found' : 'MISSING'}${link ? `; columns: ${link.fields.map((f) => f.name).join(', ')}` : ''}`);
+  const need = ['SourceRecordId__c', 'KQ_SourceRecordId__c', 'UnifiedRecordId__c'];
+  if (link) console.log(`   needed columns present: ${need.map((c) => `${c}=${link.fields.some((f) => f.name === c)}`).join(' ')}`);
+  console.log(`   UnifiedIndividual__dlm: ${names.has('UnifiedIndividual__dlm') ? 'found' : 'MISSING'}`);
 });
 
 // Histograms rely on FLOOR(...) and DATE_TRUNC(...) in Data 360 SQL; confirm both are accepted.

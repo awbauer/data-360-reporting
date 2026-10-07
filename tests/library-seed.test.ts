@@ -36,5 +36,14 @@ describe('identity resolution queries against the mock', () => {
     expect((await run('identity/unlinked-individuals')).rows).toEqual([[0]]);
     const big = (await run('identity/largest-clusters')).rows as number[][];
     expect(big.every((r) => r[1]! >= 3)).toBe(true);
+    // The data source comes from the joined source individual, so every linked profile is counted once.
+    const bySource = (await run('identity/profiles-by-source')).rows as [string, number, number][];
+    expect(bySource.reduce((n, r) => n + r[1], 0)).toBe(source);
+    expect(bySource.every((r) => r[2] <= r[1])).toBe(true);
+    // Some unified profiles combine records from different sources; each pair is listed once, in order.
+    const overlap = (await run('identity/source-overlap')).rows as [string, string, number][];
+    expect(overlap.length).toBeGreaterThan(0);
+    expect(overlap.every(([a, b]) => a < b)).toBe(true);
+    expect(new Set(overlap.map(([a, b]) => `${a}|${b}`)).size).toBe(overlap.length);
   });
 });
