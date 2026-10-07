@@ -12,8 +12,9 @@ import { authorizeUrl, exchangeCode, OAuthError, revokeToken, type FetchLike, ty
 import type { RunRecord, Store } from './store';
 import type { Block } from './admin-store';
 import { registerAdminRoutes } from './admin-routes';
+import { toCsvLine } from '../shared/csv';
 import { toSqlParameters } from '../shared/sql';
-import type { CellValue, ParamDef, QueryResponse } from '../shared/types';
+import type { ParamDef, QueryResponse } from '../shared/types';
 
 export interface AppDeps {
   config: Config;
@@ -574,16 +575,3 @@ export async function purgeExpired(config: Config, store: Store, now = Date.now(
   return (await store.purgeRuns(cutoff)) + (await store.purgeLogins(cutoff));
 }
 
-// ------------------------------------------------------------------- csv
-
-function csvCell(v: CellValue): string {
-  if (v === null || v === undefined) return '';
-  let s = String(v);
-  // Neutralize spreadsheet formula injection from org data.
-  if (typeof v === 'string' && /^([=+@\t\r]|-[^0-9.])/.test(s)) s = `'${s}`;
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-export function toCsvLine(row: CellValue[] | string[]): string {
-  return row.map(csvCell).join(',');
-}

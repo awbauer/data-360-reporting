@@ -7,7 +7,7 @@ import { Bars } from '../components/Bars';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useWorkbench } from '../context';
 import { fmtAgo, fmtNum } from '../lib/format';
-import { computeOverview } from '../lib/stats';
+import { computeOverview } from '@shared/overview';
 import { useRowCounts } from '../lib/useRowCounts';
 
 export function Overview() {
