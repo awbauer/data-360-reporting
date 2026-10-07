@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import { Link, NavLink, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { buildJoinSql, cardinalityText } from '@shared/join';
 import { buildPreviewSql, buildProfileBatches, buildRowCountSql, parseProfileRows, quoteIdent, type ObjectProfile } from '@shared/sql';
@@ -10,7 +10,8 @@ import { InsightDefinitionCard, Lineage } from '../components/Lineage';
 import { RelationshipMap } from '../components/RelationshipMap';
 import { useWorkbench } from '../context';
 import { fmtAgo, fmtNum, fmtPct } from '../lib/format';
-import { countCache, profileCache } from '../lib/storage';
+import { cachedCounts, countCache, getCountsVersion, profileCache, subscribeCounts } from '../lib/storage';
+import { InsightCredits, ObjectCredits } from '../components/credits/ObjectCredits';
 import { creditsFor, fmtEstCredits, fmtRows } from '@shared/estimate';
 import { profileRows } from '@shared/estimate';
 import { exampleCost } from '../lib/estimateText';
@@ -96,6 +97,13 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
   const ds = wb.dataspace;
   const [profile, setProfile] = useState<ObjectProfile | null>(() => profileCache.get(host, ds, obj.name));
   const [count, setCount] = useState(() => countCache.get(host, ds, obj.name));
+  // Every cached count (an insight's cost depends on the objects it reads), with this one live.
+  const countsVersion = useSyncExternalStore(subscribeCounts, getCountsVersion);
+  const counts = useMemo(
+    () => ({ ...cachedCounts(host, ds, wb.objects), ...(count ? { [obj.name]: count } : {}) }),
+    // `countsVersion` changes when any count is cached, anywhere in the app.
+    [host, ds, wb.objects, obj.name, count, countsVersion],
+  );
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
@@ -240,6 +248,8 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
           </tbody>
         </table>
       </div>
+
+      {obj.kind === 'ci' ? <InsightCredits obj={obj} counts={counts} /> : <ObjectCredits obj={obj} counts={counts} />}
 
       {obj.kind === 'ci' ? <InsightDefinitionCard obj={obj} /> : <Lineage obj={obj} />}
 

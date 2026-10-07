@@ -10,6 +10,7 @@ import { fmtAgo, fmtNum } from '../lib/format';
 import { computeOverview } from '@shared/overview';
 import { QUERY_CREDITS_PER_MILLION, creditsFor, fmtEstCredits, fmtRows } from '@shared/estimate';
 import { exampleCost } from '../lib/estimateText';
+import { OrgCredits } from '../components/credits/ObjectCredits';
 import { exportDictionary, exportHealth, type DictionaryFormat, type HealthFormat } from '../lib/exports';
 import { useRowCounts } from '../lib/useRowCounts';
 
@@ -145,6 +146,8 @@ export function Overview() {
           </div>
         )}
       </section>
+
+      <OrgCredits countsVersion={`${counted.length}:${totalRows}`} />
 
       <section className="card">
         <h2>Objects without relationships ({stats.isolated.length})</h2>

@@ -134,10 +134,17 @@ test('sign in → connect → explore → query → library → admin → discon
   const vip = page.getByRole('row', { name: /Lapsed VIPs/ });
   await expect(vip).toContainText('312');
   await expect(vip.getByRole('link', { name: 'Unified Individual' })).toBeVisible();
-  await vip.getByRole('button', { name: 'rules' }).click();
+  // Rows counted earlier size each refresh: Unified Individual, Individual and Email Engagement.
+  await expect(vip).toContainText('9K'); // 9,006 rows
+  await expect(page.getByText(/active segments? that can be priced/)).toBeVisible();
+  await vip.getByRole('button', { name: 'Details for Lapsed VIPs' }).click();
   await expect(page.getByText(/Publishes every 24 hours · next /)).toBeVisible();
   await expect(page.locator('pre.sql').first()).toContainText('"operator": "greaterThan"');
-  await expect(page.getByRole('row', { name: /Draft Test/ }).getByRole('button', { name: 'rules' })).toBeDisabled();
+  const segCredits = page.locator('.forecast-card', { hasText: 'Credits for this segment' });
+  await expect(segCredits.getByRole('cell', { name: 'At its schedule (every 24 hours)' })).toBeVisible();
+  await expect(segCredits.getByRole('cell', { name: /Activating its 312 members/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Details for Draft Test' }).click();
+  await expect(page.getByText('The API returned no rules for this segment.')).toBeVisible();
 
   // Exports: no queries run, files come straight from what's loaded and cached
   await page.getByRole('link', { name: 'Overview' }).click();
