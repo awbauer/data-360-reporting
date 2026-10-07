@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { FLEX_2026_06, DATA_SERVICES_2025_08, newPlan, type CreditPlan } from '@shared/credits';
+import { RATE_CARD, newPlan, type CreditPlan } from '@shared/credits';
 import { api } from '../api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ActualConsumption } from '../components/credits/ActualConsumption';
@@ -115,14 +115,13 @@ function Intro({ onNew, busy, connected }: { onNew: () => void; busy: boolean; c
       <h1>Credit plans</h1>
       <p style={{ margin: 0 }}>
         Estimate what a client’s Data 360 work will consume. List the activities (ingestion, identity resolution, insights, segment
-        refreshes, activations) with their volumes and schedules, pick the rate card in the contract, and see credits by month, how long
+        refreshes, activations) with their volumes and schedules, and see Flex Credits by month, how long
         the entitlement lasts and which changes would cut it. Enter actuals from Digital Wallet as the months go by to track the plan.
       </p>
       <ul className="small muted" style={{ margin: 0, paddingLeft: 18 }}>
         <li>
-          Priced with Salesforce’s published rate cards: {FLEX_2026_06.name} (as of {FLEX_2026_06.asOf}, monthly tiers per usage type) and{' '}
-          {DATA_SERVICES_2025_08.name}. The same plan is priced on both, for clients moving between them. Multipliers can be overridden for
-          negotiated rates.
+          Priced in Flex Credits with the {RATE_CARD.name} (updated {RATE_CARD.asOf}): monthly tiers per usage type, flat sandbox.
+          Multipliers can be overridden for negotiated rates.
         </li>
         <li>Every activity carries its assumption, and the Excel and Markdown exports include them and the rate card used.</li>
         <li>Plans are saved to your workbench account, not to the org, and work without connecting one.</li>

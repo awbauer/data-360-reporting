@@ -298,7 +298,6 @@ function UseInPlan({ data, cards }: { data: Consumption; cards: Set<string> | un
   const qc = useQueryClient();
   const plans = useQuery({ queryKey: ['plans'], queryFn: api.plans.list });
   const [planId, setPlanId] = useState('');
-  const [sandbox, setSandbox] = useState(false);
   const [entitlement, setEntitlement] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string; id?: string } | null>(null);
@@ -311,7 +310,7 @@ function UseInPlan({ data, cards }: { data: Consumption; cards: Set<string> | un
     try {
       const s = await api.plans.get(target);
       if (!s.plan.start) throw new Error('Set the plan’s contract start first: actuals are matched to its months.');
-      const actuals = planActuals(data, s.plan.start, s.plan.months, { ...(cards ? { cards } : {}), includeSandbox: sandbox, through: lastFullMonth() });
+      const actuals = planActuals(data, s.plan.start, s.plan.months, { ...(cards ? { cards } : {}), includeSandbox: true, through: lastFullMonth() });
       const kept = s.plan.actuals.filter((a) => !actuals.some((x) => x.month === a.month));
       const plan = {
         ...s.plan,
@@ -334,17 +333,13 @@ function UseInPlan({ data, cards }: { data: Consumption; cards: Set<string> | un
       <h2 style={{ margin: 0 }}>Track a plan against it</h2>
       <div className="small muted">
         Writes each complete month’s credits into a plan’s actuals (matched by its contract start), so its running total and runway use
-        what was really consumed.
+        what was really consumed. Sandbox is included: it draws on the same Flex Credits.
       </div>
       {plans.data?.length ? (
         <>
           <select aria-label="Plan to fill" value={target} onChange={(e) => setPlanId(e.target.value)}>
             {plans.data.map((p) => <option key={p.id} value={p.id}>{p.name}{p.client ? ` (${p.client})` : ''}</option>)}
           </select>
-          <label className="row small" style={{ flexDirection: 'row', gap: 6 }}>
-            <input type="checkbox" checked={sandbox} onChange={(e) => setSandbox(e.target.checked)} style={{ width: 'auto' }} />
-            Include sandbox consumption (Flex Credits share one pool; Data Services sandbox credits are separate)
-          </label>
           {purchased !== null && (
             <label className="row small" style={{ flexDirection: 'row', gap: 6 }}>
               <input type="checkbox" checked={entitlement} onChange={(e) => setEntitlement(e.target.checked)} style={{ width: 'auto' }} />

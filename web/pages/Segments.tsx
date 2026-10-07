@@ -1,16 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { estimate, newItem, newPlan } from '@shared/credits';
+import { RATE_CARD, estimate, newItem, newPlan } from '@shared/credits';
 import { segmentForecast, segmentMonthly, type Counts } from '@shared/credit-forecast';
 import type { SegmentInfo } from '@shared/types';
 import { api } from '../api';
-import { CardPicker, Credits, ForecastCard } from '../components/credits/Forecast';
+import { Credits, ForecastCard } from '../components/credits/Forecast';
 import { ActualLine, scheduleEstimate } from '../components/credits/ObjectCredits';
 import { attributedCredits } from '@shared/consumption';
 import { useCachedConsumption } from '../lib/consumption';
 import { useWorkbench } from '../context';
-import { useRateCard } from '../lib/creditPrefs';
 import { fmtAgo, fmtCompact, fmtNum } from '../lib/format';
 import { describePublishInterval } from '@shared/schedule';
 import { prettyCriteria, resolveObject } from '../lib/names';
@@ -25,7 +24,6 @@ export function SegmentsPage() {
   const extras = useQuery({ queryKey: ['extras', host, wb.dataspace], queryFn: () => api.extras(wb.dataspace) });
   const [q, setQ] = useState('');
   const [open, setOpen] = useState<string | null>(null);
-  const [card] = useRateCard();
   const consumption = useCachedConsumption();
   const actuals = consumption?.sources.resources ? consumption : null;
   const listing = extras.data?.segments ?? null;
@@ -37,20 +35,20 @@ export function SegmentsPage() {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [listing, q]);
   const monthly = useMemo(
-    () => new Map((listing?.items ?? []).map((s) => [s.apiName, segmentMonthly(card, s, wb.objects, counts)])),
-    [listing, card, wb.objects, counts],
+    () => new Map((listing?.items ?? []).map((s) => [s.apiName, segmentMonthly(RATE_CARD, s, wb.objects, counts)])),
+    [listing, wb.objects, counts],
   );
   // Active segments priced together, so Flex tiers apply to their combined refreshes.
   const total = useMemo(() => {
     const priced = (listing?.items ?? []).filter((s) => !inactive(s) && monthly.get(s.apiName)?.rows != null);
     const plan = {
-      ...newPlan('segments', card.id),
+      ...newPlan('segments'),
       months: 1,
       items: priced.map((s) => newItem('segmentation', s.apiName, { perRun: monthly.get(s.apiName)!.rows!, runsPerMonth: monthly.get(s.apiName)!.runs })),
     };
     const active = (listing?.items ?? []).filter((s) => !inactive(s)).length;
-    return { credits: estimate(plan, card).total.pooled, priced: priced.length, active };
-  }, [listing, monthly, card]);
+    return { credits: estimate(plan).total.pooled, priced: priced.length, active };
+  }, [listing, monthly]);
 
   return (
     <div className="page">
@@ -70,7 +68,7 @@ export function SegmentsPage() {
             <div className="grow small">
               {total.priced > 0 ? (
                 <>
-                  <b>About <Credits value={total.credits} card={card} unit={`${card.credits} a month`} /></b> to refresh the {total.priced} active
+                  <b>About <Credits value={total.credits} unit="Flex Credits a month" /></b> to refresh the {total.priced} active
                   segment{total.priced === 1 ? '' : 's'} that can be priced{total.priced < total.active ? ` (of ${total.active})` : ''}, at their publish schedules.{' '}
                 </>
               ) : (
@@ -85,7 +83,6 @@ export function SegmentsPage() {
                   : <>Compare with what each one really consumed: <Link to="/credits/actual">read actual consumption</Link>.</>}
               </span>
             </div>
-            <CardPicker />
           </div>
         </div>
       )}
@@ -104,7 +101,7 @@ export function SegmentsPage() {
                 <th>Segment</th><th>Built on</th><th>Status</th><th>Publish status</th>
                 <th style={{ textAlign: 'right' }}>Members (last)</th><th>Last published</th>
                 <th style={{ textAlign: 'right' }} title="Rows read by each refresh">Rows a refresh</th>
-                <th style={{ textAlign: 'right' }} title={`${card.name}, at the segment's publish schedule`}>Credits a month</th>
+                <th style={{ textAlign: 'right' }} title={`${RATE_CARD.name}, at the segment's publish schedule`}>Credits a month</th>
                 {actuals && <th style={{ textAlign: 'right' }} title={`Consumed since ${actuals.resourcesSince}, from the hourly consumption feed`}>Actual, 30 days</th>}
                 <th />
               </tr>
@@ -139,9 +136,8 @@ function SegmentRow({ s, m, actual, counts, open, onToggle }: {
   onToggle: () => void;
 }) {
   const wb = useWorkbench();
-  const [card] = useRateCard();
   const on = s.segmentOn ? resolveObject(s.segmentOn, wb.byName, wb.objects) : undefined;
-  const forecast = useMemo(() => (open ? segmentForecast(card, s, wb.objects, counts) : null), [open, card, s, wb.objects, counts]);
+  const forecast = useMemo(() => (open ? segmentForecast(RATE_CARD, s, wb.objects, counts) : null), [open, s, wb.objects, counts]);
   return (
     <>
       <tr>

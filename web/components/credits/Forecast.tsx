@@ -1,38 +1,21 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ACTIVITY, RATE_CARDS, UNIT_NAME, frequencyOf, newPlan, type RateCard, type RateCardId } from '@shared/credits';
+import { ACTIVITY, RATE_CARD, UNIT_NAME, frequencyOf, newPlan } from '@shared/credits';
 import { actionToItem, type ActionCost, type Forecast } from '@shared/credit-forecast';
 import { api } from '../../api';
-import { useRateCard } from '../../lib/creditPrefs';
-import { fmtCredits, fmtMoney, fmtNum } from '../../lib/format';
+import { fmtCredits, fmtNum } from '../../lib/format';
 
-/** Which rate card inline estimates use; remembered in this browser. */
-export function CardPicker() {
-  const [card, setCard] = useRateCard();
-  return (
-    <select className="card-picker" aria-label="Rate card for estimates" value={card.id} onChange={(e) => setCard(e.target.value as RateCardId)}>
-      {Object.values(RATE_CARDS).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-    </select>
-  );
+/** Credits, with an optional unit after them. */
+export function Credits({ value, unit }: { value: number; unit?: string }) {
+  return <>{fmtCredits(value)}{unit ? ` ${unit}` : ''}</>;
 }
 
-/** Credits, with list-price money beside them when the card has one and it's at least a cent. */
-export function Credits({ value, card, unit }: { value: number; card: RateCard; unit?: string }) {
-  const money = card.listPricePer100k !== undefined ? (value / 100_000) * card.listPricePer100k : 0;
-  return (
-    <>
-      {fmtCredits(value)}{unit ? ` ${unit}` : ''}
-      {money >= 0.01 && <span className="muted small"> ≈ {fmtMoney(money)}</span>}
-    </>
-  );
-}
-
-function Cost({ a, value, card }: { a: ActionCost; value: number | null; card: RateCard }) {
+function Cost({ a, value }: { a: ActionCost; value: number | null }) {
   if (a.free) return <span className="badge" title={a.note}>not billed</span>;
   if (a.unpriced) return <span className="badge bad" title={a.note}>not priced</span>;
   if (value === null) return <span className="muted">once</span>;
-  return <Credits value={value} card={card} />;
+  return <Credits value={value} />;
 }
 
 const volume = (a: ActionCost) => {
@@ -44,10 +27,9 @@ const volume = (a: ActionCost) => {
 
 /**
  * Common actions on one thing (object, insight, segment, query) and what each costs, on the rate
- * card chosen with the picker. `context` names the thing in plans the actions are added to.
+ * Flex rate card. `context` names the thing in plans the actions are added to.
  */
 export function ForecastTable({ forecast, context }: { forecast: Forecast; context: string }) {
-  const [card] = useRateCard();
   return (
     <>
       <div style={{ overflowX: 'auto' }}>
@@ -63,8 +45,8 @@ export function ForecastTable({ forecast, context }: { forecast: Forecast; conte
                   {a.detail && <div className="small muted">{a.detail}</div>}
                 </td>
                 <td className="small">{volume(a)}</td>
-                <td className="num"><Cost a={a} value={a.once} card={card} /></td>
-                <td className="num">{a.runsPerMonth > 0 || a.free || a.unpriced ? <Cost a={a} value={a.monthly} card={card} /> : <span className="muted">—</span>}</td>
+                <td className="num"><Cost a={a} value={a.once} /></td>
+                <td className="num">{a.runsPerMonth > 0 || a.free || a.unpriced ? <Cost a={a} value={a.monthly} /> : <span className="muted">—</span>}</td>
               </tr>
             ))}
           </tbody>
@@ -94,7 +76,7 @@ export function ReadsNote({ forecast, what }: { forecast: Forecast; what: string
   );
 }
 
-/** The standard card: title, rate-card picker, what it's sized from, the actions, a caveat. */
+/** The standard card: title, what it's sized from, the actions, a caveat. */
 export function ForecastCard({ title, forecast, context, what, children }: {
   title: string;
   forecast: Forecast;
@@ -103,20 +85,17 @@ export function ForecastCard({ title, forecast, context, what, children }: {
   what: string;
   children?: ReactNode;
 }) {
-  const [card] = useRateCard();
   return (
     <section className="card forecast-card">
       <div className="row wrap" style={{ marginBottom: 6 }}>
         <h2 className="grow" style={{ margin: 0 }}>{title}</h2>
-        <CardPicker />
       </div>
       {children}
       <ReadsNote forecast={forecast} what={what} />
       <ForecastTable forecast={forecast} context={context} />
       <div className="small muted" style={{ marginTop: 6 }}>
         Each figure prices the action on its own at the start of a month.{' '}
-        {card.tiers ? 'Other usage of the same type that month moves Flex into cheaper tiers, so these are upper bounds. ' : ''}
-        {card.listPricePer100k !== undefined ? `Money at list price (${fmtMoney(card.listPricePer100k)} per 100,000). ` : ''}
+        Other usage of the same type that month moves it into cheaper tiers, so these are upper bounds.{' '}
         <Link to="/credits">Plan it in Credits</Link>.
       </div>
     </section>
@@ -182,10 +161,9 @@ function AddToPlan({ actions, context }: { actions: ActionCost[]; context: strin
 
 /** A short inline estimate for helper text: "≈ 0.01 credits". */
 export function CreditHint({ credits, prefix = '≈' }: { credits: number; prefix?: string }) {
-  const [card] = useRateCard();
   return (
-    <span className="credit-hint" title={`${card.name}, base rate. Switch rate card with the picker on any estimate card.`}>
-      {prefix} {fmtCredits(credits)} {card.credits.replace(/s$/, '')}{Math.abs(credits - 1) < 1e-9 ? '' : 's'}
+    <span className="credit-hint" title={`${RATE_CARD.name} (${RATE_CARD.asOf}), base rate.`}>
+      {prefix} {fmtCredits(credits)} Flex Credit{Math.abs(credits - 1) < 1e-9 ? '' : 's'}
     </span>
   );
 }

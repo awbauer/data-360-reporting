@@ -45,7 +45,7 @@ const PER = 1e6;
 const n = (x: number) => Math.round(x).toLocaleString('en-US');
 
 export function priceAction(card: RateCard, a: Action): ActionCost {
-  const plan = (item: Partial<PlanItem>) => ({ ...newPlan('forecast', card.id), months: 1, items: [newItem(a.kind, 'a', item)] });
+  const plan = (item: Partial<PlanItem>) => ({ ...newPlan('forecast'), months: 1, items: [newItem(a.kind, 'a', item)] });
   const once = estimate(plan({ perRun: 0, runsPerMonth: 0, initial: a.units }), card);
   const e = once.items[0]!;
   return {

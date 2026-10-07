@@ -5,7 +5,7 @@ import {
   ACTIVITIES,
   ACTIVITY,
   MAX_MONTHS,
-  RATE_CARDS,
+  RATE_CARD,
   UNIT_NAME,
   estimate,
   levers,
@@ -17,9 +17,7 @@ import {
   type Lever,
   type PlanItem,
   type RateCard,
-  type RateCardId,
 } from '@shared/credits';
-import { otherCard } from '@shared/credits-report';
 import { planActuals } from '@shared/consumption';
 import { useConsumption } from '../../lib/consumption';
 import { ApiError, api, type StoredPlan } from '../../api';
@@ -163,10 +161,8 @@ function Editor({ stored, onReload, onDuplicate, onDelete }: {
 
   // Estimates follow a deferred copy so typing stays quick on big plans.
   const view = useDeferredValue(plan);
-  const card = RATE_CARDS[view.cardId];
-  const alt = otherCard(view);
+  const card = RATE_CARD;
   const est = useMemo(() => estimate(view, card), [view, card]);
-  const altEst = useMemo(() => estimate({ ...view, cardId: alt.id }, alt), [view, alt]);
   // Levers worth showing: at least 0.1% of the plan.
   const lv = useMemo(() => levers(view, card, est).filter((l) => l.saves >= est.total.pooled * 0.001), [view, card, est]);
 
@@ -204,22 +200,12 @@ function Editor({ stored, onReload, onDuplicate, onDelete }: {
       )}
       {exportError && <div className="alert error small" role="alert">Export failed: {exportError}</div>}
 
-      <Summary plan={view} est={est} card={card} alt={alt} altEst={altEst} />
+      <Summary plan={view} est={est} />
       {est.warnings.map((w) => <div className="alert warn small" key={w}>{w}</div>)}
 
       <section className="card">
         <h2>Contract</h2>
         <div className="grid contract">
-          <label>
-            Rate card
-            <select value={plan.cardId} onChange={(e) => update((p) => {
-              const n: CreditPlan = { ...p, cardId: e.target.value as RateCardId };
-              delete n.overrides; // overrides name the other card's usage types
-              return n;
-            })}>
-              {Object.values(RATE_CARDS).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </label>
           <label>
             Contract start
             <input type="month" value={plan.start ?? ''} placeholder="YYYY-MM" onChange={(e) => {
@@ -234,13 +220,13 @@ function Editor({ stored, onReload, onDuplicate, onDelete }: {
             <NumberField value={plan.months} min={1} max={MAX_MONTHS} integer onChange={(m) => set('months', m)} />
           </label>
           <label>
-            {card.credits} in the contract
+            Flex Credits in the contract
             <QuantityInput className="" label="Credits in the contract" optional placeholder="not set" value={plan.entitlement} onChange={(v) => set('entitlement', v)} />
           </label>
           <label>
             Price per 100,000 credits
             <span className="row" style={{ gap: 4 }}>
-              <QuantityInput className="" label="Price per 100,000 credits" optional placeholder={card.listPricePer100k ? `list ${card.listPricePer100k}` : 'not set'} value={plan.pricePer100k} onChange={(v) => set('pricePer100k', v)} />
+              <QuantityInput className="" label="Price per 100,000 credits" optional placeholder="not set" value={plan.pricePer100k} onChange={(v) => set('pricePer100k', v)} />
               <select aria-label="Currency" value={plan.currency ?? 'USD'} onChange={(e) => set('currency', e.target.value)}>
                 {CURRENCIES.map((c) => <option key={c}>{c}</option>)}
               </select>
@@ -252,9 +238,7 @@ function Editor({ stored, onReload, onDuplicate, onDelete }: {
           </label>
         </div>
         <div className="small muted" style={{ marginTop: 8 }}>
-          {card.name}, as of {card.asOf}, from <a href={card.source} target="_blank" rel="noreferrer">Salesforce’s published rate card</a>.
-          {card.listPricePer100k ? ` Salesforce lists ${card.credits} at ${fmtMoney(card.listPricePer100k)} per 100,000; use the client’s contract price.` : ''}
-          {' '}Growth compounds from the contract start and applies to recurring volumes, not one-time ones.
+          Priced in Flex Credits with the {card.name} (updated {card.asOf}). Growth compounds from the contract start and applies to recurring volumes, not one-time ones.
         </div>
         <label style={{ marginTop: 12 }}>
           Notes
@@ -307,10 +291,10 @@ function Editor({ stored, onReload, onDuplicate, onDelete }: {
       )}
 
       <Actuals plan={plan} est={est} onChange={(actuals) => set('actuals', actuals)} hint={
-        wb ? <FillFromOrg plan={plan} card={RATE_CARDS[plan.cardId]} onFill={(actuals) => set('actuals', actuals)} /> : null
+        wb ? <FillFromOrg plan={plan} onFill={(actuals) => set('actuals', actuals)} /> : null
       } />
 
-      <RateCardDetails plan={plan} card={RATE_CARDS[plan.cardId]} onOverride={(utId, v) => update((p) => {
+      <RateCardDetails plan={plan} card={card} onOverride={(utId, v) => update((p) => {
         const o = { ...(p.overrides ?? {}) };
         if (v === undefined) delete o[utId];
         else o[utId] = v;
@@ -363,18 +347,16 @@ function Tile({ num, label, sub, tone }: { num: string; label: string; sub?: Rea
   );
 }
 
-function Summary({ plan, est, card, alt, altEst }: { plan: CreditPlan; est: Estimate; card: RateCard; alt: RateCard; altEst: Estimate }) {
+function Summary({ plan, est }: { plan: CreditPlan; est: Estimate }) {
   const last = est.months[est.months.length - 1]!;
   const ent = plan.entitlement;
-  const separateSandbox = card.sandboxPool === 'separate' && est.total.sandbox > 0;
   return (
     <div className="grid tiles">
       <Tile
         num={fmtCredits(est.total.pooled)}
-        label={`${card.credits} over ${plan.months} month${plan.months === 1 ? '' : 's'}`}
+        label={`Flex Credits over ${plan.months} month${plan.months === 1 ? '' : 's'}`}
         sub={`${fmtCredits(est.total.pooled / plan.months)} a month on average`}
       />
-      {separateSandbox && <Tile num={fmtCredits(est.total.sandbox)} label="Sandbox credits" sub={`${card.credits} for Sandbox, bought separately`} />}
       <Tile
         num={est.cost !== null ? fmtMoney(est.cost, plan.currency) : '—'}
         label="Estimated cost"
@@ -390,11 +372,6 @@ function Summary({ plan, est, card, alt, altEst }: { plan: CreditPlan; est: Esti
       ) : (
         <Tile num="—" label="Entitlement" sub="Enter the contract’s credits to see how long they last" />
       )}
-      <Tile
-        num={fmtCredits(altEst.total.pooled)}
-        label={`Same plan in ${alt.credits}`}
-        sub="A different credit at its own price: compare cost, not counts"
-      />
     </div>
   );
 }
@@ -408,7 +385,7 @@ function Results({ plan, est, card }: { plan: CreditPlan; est: Estimate; card: R
       <div className="grid cols-2">
         <section className="card chart-card">
           <h2>Credits by month</h2>
-          <div className="small muted" style={{ marginBottom: 6 }}>What draws on the entitlement{card.sandboxPool === 'shared' ? ', production and sandbox' : ', production only'}.</div>
+          <div className="small muted" style={{ marginBottom: 6 }}>What draws on the entitlement, production and sandbox.</div>
           <BarChart
             bars={est.months.map((m) => ({ label: m.label, value: Math.round(m.pooled) }))}
             seriesName="Credits"
@@ -506,7 +483,7 @@ function LeverRow({ lever, of, onApply }: { lever: Lever; of: number; onApply: (
  * Fills the plan's actuals from the connected org's consumption feeds: each complete month since the
  * contract start, for the chosen consumption cards. Sandbox counts only where the card pools it.
  */
-function FillFromOrg({ plan, card, onFill }: { plan: CreditPlan; card: RateCard; onFill: (a: CreditPlan['actuals']) => void }) {
+function FillFromOrg({ plan, onFill }: { plan: CreditPlan; onFill: (a: CreditPlan['actuals']) => void }) {
   const c = useConsumption();
   const data = c.data;
   const allCards = useMemo(() => [...new Set((data?.monthly ?? []).map((m) => m.card).filter((x): x is string => Boolean(x)))].sort(), [data]);
@@ -523,7 +500,7 @@ function FillFromOrg({ plan, card, onFill }: { plan: CreditPlan; card: RateCard;
     if (!plan.start || !data) return;
     const d = new Date();
     const through = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
-    const rows = planActuals(data, plan.start, plan.months, { ...(allCards.length ? { cards } : {}), includeSandbox: card.sandboxPool === 'shared', through });
+    const rows = planActuals(data, plan.start, plan.months, { ...(allCards.length ? { cards } : {}), includeSandbox: true, through });
     const kept = plan.actuals.filter((a) => !rows.some((r) => r.month === a.month));
     onFill([...kept, ...rows.map((r) => ({ month: r.month, credits: Math.round(r.credits) }))].sort((a, b) => a.month - b.month));
     setDone(rows.length ? `Filled ${rows.length} month${rows.length === 1 ? '' : 's'}.` : 'No complete month of consumption falls inside this plan yet.');
@@ -533,7 +510,7 @@ function FillFromOrg({ plan, card, onFill }: { plan: CreditPlan; card: RateCard;
       <div>
         <b>From this org’s consumption.</b>{' '}
         {data
-          ? <>Read {fmtAgo(data.at)} from <code>{data.sources.totals}</code>. Fills each complete month since the contract start{card.sandboxPool === 'shared' ? ', sandbox included (one Flex pool)' : ', production only'}.</>
+          ? <>Read {fmtAgo(data.at)} from <code>{data.sources.totals}</code>. Fills each complete month since the contract start, sandbox included (one Flex pool).</>
           : <>The org’s consumption feed (<code>{c.pick.totals.object.name}</code>) hasn’t been read in this browser yet.</>}
       </div>
       {allCards.length > 1 && (
@@ -607,13 +584,12 @@ function RateCardDetails({ plan, card, onOverride }: { plan: CreditPlan; card: R
       <summary><h2 style={{ display: 'inline' }}>Rate card: {card.name}</h2></summary>
       <div className="stack" style={{ marginTop: 10 }}>
         <div className="small muted">
-          Multipliers as published on {card.asOf} (<a href={card.source} target="_blank" rel="noreferrer">source</a>). Salesforce can change
-          them; check the client’s order form. An override replaces a usage type’s production multiplier{card.tiers ? ' and its tiers' : ''},
-          for a negotiated or updated rate.
+          Data 360 multipliers from the {card.source}. Tiers apply per usage type to credits used in the calendar month; sandbox is
+          flat. An override replaces a usage type’s production multiplier and its tiers, for a negotiated rate.
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table className="t">
-            <thead><tr><th>Usage type</th><th>Per</th><th className="num">Production{card.tiers ? ' (base / tier 2 / 3 / 4)' : ''}</th><th className="num">Sandbox</th><th className="num">Override</th></tr></thead>
+            <thead><tr><th>Usage type</th><th>Per</th><th className="num">Production (base / tier 2 / 3 / 4)</th><th className="num">Sandbox</th><th className="num">Override</th></tr></thead>
             <tbody>
               {Object.values(card.usageTypes).map((u) => (
                 <tr key={u.id}>
@@ -627,7 +603,7 @@ function RateCardDetails({ plan, card, onOverride }: { plan: CreditPlan; card: R
             </tbody>
           </table>
         </div>
-        <h3>How each activity bills under this card</h3>
+        <h3>How each activity bills</h3>
         <div style={{ overflowX: 'auto' }}>
           <table className="t">
             <thead><tr><th>Activity</th><th>Billed as</th></tr></thead>

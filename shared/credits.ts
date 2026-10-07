@@ -1,12 +1,12 @@
-// Credit estimates for Data 360 work. A plan lists activities (ingestion, unification, segment
-// refreshes...) in units a consultant can reason about; a rate card maps each activity to a billed
-// usage type and multiplier. The same plan can be priced under either card, which is the point:
-// clients move from Data Services credits to Flex Credits, and the activities don't change.
+// Flex Credit estimates for Data 360 work. A plan lists activities (ingestion, unification, segment
+// refreshes...) in units a consultant can reason about; the rate card maps each activity to a
+// billed usage type and multiplier.
 //
-// Sources, transcribed as published (check the date before relying on them):
-// - Flex Credits Rate Card, updated June 17, 2026. Data 360 multipliers are tiered per usage type
-//   on credits consumed in the calendar month; sandbox is flat with no tiers.
-// - Salesforce Customer Data Cloud Rate Card (Data Services credits), updated August 2025.
+// Sources:
+// - Salesforce Flex Credits Rate Card, updated August 31, 2026 (Data 360 section). Multipliers are
+//   tiered per usage type on credits consumed in the calendar month, thresholds inclusive of the
+//   upper limit; sandbox (and scratch orgs) use a flat multiplier with no tiers and draw on the
+//   same Flex Credits.
 // - Activity → Flex usage type mapping: Trailhead, "Maximize Your Data 360 Credits".
 // - A run that crosses a tier is billed entirely at the lower multiplier (same Trailhead unit).
 
@@ -64,7 +64,7 @@ export const ACTIVITIES: ActivityDef[] = [
   { kind: 'queries', group: 'Act & real time', unit: 'rows', label: 'Queries', hint: 'Rows scanned (not returned) by Query API, reports, Tableau and this workbench.' },
   { kind: 'real_time', group: 'Act & real time', unit: 'events', continuous: true, label: 'Real-time events, API calls and actions', hint: 'Sub-second real-time: profile and entity events, API calls and actions. Enter events per day.' },
   { kind: 'sharing_out', group: 'Share', unit: 'rows', label: 'Zero-copy sharing out', hint: 'Rows an external platform reads through a data share.' },
-  { kind: 'data_share_out', group: 'Share', unit: 'rows', label: 'Data share rows shared', hint: 'Rows shared out when a data share refreshes (a Data Services usage type).' },
+  { kind: 'data_share_out', group: 'Share', unit: 'rows', label: 'Data share rows shared', hint: 'Rows shared out when a data share refreshes. Not billed on Flex; reads by the other platform bill as Zero-Copy Sharing-Out.' },
   { kind: 'unstructured', group: 'Unstructured & AI', unit: 'mb', label: 'Unstructured data processed', hint: 'Megabytes of documents, transcripts and similar processed.' },
   { kind: 'intelligent_processing', group: 'Unstructured & AI', unit: 'mb', label: 'Intelligent processing', hint: 'Megabytes processed.' },
   { kind: 'inferences', group: 'Unstructured & AI', unit: 'inferences', label: 'Model inferences', hint: 'Predictions scored.' },
@@ -89,26 +89,18 @@ export interface UsageType {
 
 export interface Mapping {
   usageType?: string;
-  /** Not billed under this card (no usage type), as opposed to not priced by it. */
+  /** No Flex usage type: not billed, as opposed to not priced by the card. */
   free?: boolean;
   note?: string;
 }
 
-export type RateCardId = 'flex-2026-06' | 'data-services-2025-08';
-
 export interface RateCard {
-  id: RateCardId;
+  id: string;
   name: string;
-  /** What the contract calls the credits. */
-  credits: string;
   asOf: string;
   source: string;
-  /** Monthly tier thresholds in credits, per usage type. Absent for flat cards. */
-  tiers?: number[];
-  /** Whether sandbox usage draws on the same credits as production. */
-  sandboxPool: 'shared' | 'separate';
-  /** List price per 100,000 credits, if Salesforce publishes one. */
-  listPricePer100k?: number;
+  /** Monthly tier thresholds in credits, per usage type (production only). */
+  tiers: number[];
   usageTypes: Record<string, UsageType>;
   map: Record<ActivityKind, Mapping>;
 }
@@ -116,15 +108,12 @@ export interface RateCard {
 const ut = (id: string, label: string, unit: Unit, production: number[], sandbox: number): UsageType => ({ id, label, unit, production, sandbox });
 const byId = (list: UsageType[]) => Object.fromEntries(list.map((u) => [u.id, u]));
 
-export const FLEX_2026_06: RateCard = {
-  id: 'flex-2026-06',
-  name: 'Flex Credits (June 2026)',
-  credits: 'Flex Credits',
-  asOf: '2026-06-17',
-  source: 'https://www.salesforce.com/en-us/wp-content/uploads/sites/4/assets/pdf/agentforce/Flex-Credits-Rate-Card-06.17.2026.pdf',
+export const RATE_CARD: RateCard = {
+  id: 'flex-2026-08-31',
+  name: 'Flex Credits Rate Card',
+  asOf: '2026-08-31',
+  source: 'Salesforce Flex Credits Rate Card, updated August 31, 2026 (Data 360)',
   tiers: [300_000, 1_500_000, 12_500_000],
-  sandboxPool: 'shared',
-  listPricePer100k: 500,
   usageTypes: byId([
     ut('prep', 'Data 360 Prep', 'rows', [40, 32, 16, 8], 32),
     ut('unification', 'Data 360 Unification', 'rows', [75_000, 60_000, 30_000, 15_000], 60_000),
@@ -162,65 +151,6 @@ export const FLEX_2026_06: RateCard = {
     private_connect: { note: 'Not on the Flex Data 360 card (Salesforce maps it to “Not applicable”). Ask the account team how it bills.' },
     code_extension: { usageType: 'code_extension' },
   },
-};
-
-export const DATA_SERVICES_2025_08: RateCard = {
-  id: 'data-services-2025-08',
-  name: 'Data Services credits (August 2025)',
-  credits: 'Data Services credits',
-  asOf: '2025-08',
-  source: 'https://www.salesforce.com/en-us/wp-content/uploads/sites/4/documents/platform/data-cloud-platform-services-rate-sheet-dc-9-04.pdf',
-  sandboxPool: 'separate',
-  usageTypes: byId([
-    ut('internal', 'Internal Data Pipeline', 'rows', [0], 0),
-    ut('pipeline_batch', '(External) Data Pipeline, batch', 'rows', [2_000], 1_600),
-    ut('pipeline_streaming', '(External) Data Pipeline, streaming', 'rows', [5_000], 4_000),
-    ut('transforms_batch', 'Data Transforms, batch', 'rows', [400], 320),
-    ut('transforms_streaming', 'Data Transforms, streaming', 'rows', [5_000], 4_000),
-    ut('unstructured', 'Unstructured Data Processed', 'mb', [60], 48),
-    ut('federation', 'Data Federation or Sharing Rows Accessed', 'rows', [70], 56),
-    ut('data_share', 'Data Share Rows Shared (Data Out)', 'rows', [800], 640),
-    ut('private_connect', 'Private Connect Data Processed', 'gb', [500], 400),
-    ut('unification', 'Profile Unification', 'rows', [100_000], 80_000),
-    ut('realtime', 'Sub-second Real-Time Events', 'events', [70_000], 56_000),
-    ut('ci_batch', 'Calculated Insights, batch', 'rows', [15], 12),
-    ut('ci_streaming', 'Calculated Insights, streaming', 'rows', [800], 640),
-    ut('inferences', 'Inferences', 'inferences', [3_500], 2_800),
-    ut('queries', 'Data Queries', 'rows', [2], 1.6),
-    ut('streaming_actions', 'Streaming Actions (including Lookups)', 'rows', [800], 640),
-    ut('segmentation', 'Segment Rows Processed', 'rows', [20], 16),
-    ut('activation_batch', 'Batch Activation', 'rows', [10], 8),
-    ut('activation_streaming', 'Activate DMO, streaming', 'rows', [1_600], 1_280),
-  ]),
-  map: {
-    ingest_internal: { usageType: 'internal' },
-    ingest_batch: { usageType: 'pipeline_batch' },
-    ingest_streaming: { usageType: 'pipeline_streaming' },
-    federation_in: { usageType: 'federation' },
-    transform_batch: { usageType: 'transforms_batch' },
-    transform_streaming: { usageType: 'transforms_streaming' },
-    unification: { usageType: 'unification' },
-    ci_batch: { usageType: 'ci_batch' },
-    ci_streaming: { usageType: 'ci_streaming' },
-    segmentation: { usageType: 'segmentation' },
-    activation_batch: { usageType: 'activation_batch' },
-    activation_streaming: { usageType: 'activation_streaming' },
-    streaming_actions: { usageType: 'streaming_actions' },
-    queries: { usageType: 'queries' },
-    sharing_out: { usageType: 'federation' },
-    data_share_out: { usageType: 'data_share' },
-    real_time: { usageType: 'realtime' },
-    unstructured: { usageType: 'unstructured' },
-    intelligent_processing: { note: 'Not on the August 2025 Data Services card. Ask the account team how it bills.' },
-    inferences: { usageType: 'inferences' },
-    private_connect: { usageType: 'private_connect' },
-    code_extension: { note: 'Not on the August 2025 Data Services card. Ask the account team how it bills.' },
-  },
-};
-
-export const RATE_CARDS: Record<RateCardId, RateCard> = {
-  'flex-2026-06': FLEX_2026_06,
-  'data-services-2025-08': DATA_SERVICES_2025_08,
 };
 
 // ------------------------------------------------------------------- plans
@@ -297,8 +227,7 @@ export interface CreditPlan {
   version: 1;
   name: string;
   client?: string;
-  cardId: RateCardId;
-  /** Negotiated or updated production multipliers, per usage type; replaces that type's tiers. */
+  /** Negotiated production multipliers, per usage type; replaces that type's tiers. */
   overrides?: Record<string, number>;
   /** First month of the contract, YYYY-MM. Labels months; optional. */
   start?: string;
@@ -318,8 +247,8 @@ export interface CreditPlan {
 
 export const MAX_MONTHS = 60;
 
-export function newPlan(name: string, cardId: RateCardId = 'flex-2026-06'): CreditPlan {
-  return { version: 1, name, cardId, months: 12, growthPct: 0, items: [], actuals: [] };
+export function newPlan(name: string): CreditPlan {
+  return { version: 1, name, months: 12, growthPct: 0, items: [], actuals: [] };
 }
 
 export function newItem(kind: ActivityKind, id: string, over: Partial<PlanItem> = {}): PlanItem {
@@ -365,7 +294,7 @@ export interface ItemEstimate {
   total: number;
   /** Units over the plan (after growth). */
   units: number;
-  /** Not billed under this card. */
+  /** No Flex usage type: not billed. */
   free: boolean;
   /** The card has no price for this activity, so it counts as 0 here. */
   unpriced: boolean;
@@ -389,7 +318,7 @@ export interface MonthEstimate {
   label: string;
   production: number;
   sandbox: number;
-  /** What draws on the entitlement: production, plus sandbox when the card pools them. */
+  /** What draws on the entitlement: production plus sandbox (both use the same Flex Credits). */
   pooled: number;
   actual: number | null;
   /** Pooled credits to date, using the actual where one was entered. */
@@ -398,7 +327,6 @@ export interface MonthEstimate {
 }
 
 export interface Estimate {
-  cardId: RateCardId;
   months: MonthEstimate[];
   items: ItemEstimate[];
   usage: UsageEstimate[];
@@ -455,7 +383,7 @@ export function chargeRun(x: number, used: number, multipliers: number[], tiers:
   return t1 > t0 ? { credits: x * multipliers[t1]!, tier: t1 } : { credits: c0, tier: t0 };
 }
 
-export function estimate(plan: CreditPlan, card: RateCard = RATE_CARDS[plan.cardId]): Estimate {
+export function estimate(plan: CreditPlan, card: RateCard = RATE_CARD): Estimate {
   const months = Math.max(1, Math.min(MAX_MONTHS, Math.floor(plan.months)));
   const zeros = () => new Array<number>(months).fill(0);
   const warnings: string[] = [];
@@ -488,7 +416,7 @@ export function estimate(plan: CreditPlan, card: RateCard = RATE_CARDS[plan.card
     if (env === 'sandbox') return { mult: [t.sandbox] };
     const o = plan.overrides?.[id];
     if (o !== undefined && Number.isFinite(o) && o >= 0) return { mult: [o] };
-    return { mult: t.production, ...(card.tiers && t.production.length > 1 ? { tiers: card.tiers } : {}) };
+    return { mult: t.production, ...(t.production.length > 1 ? { tiers: card.tiers } : {}) };
   };
 
   for (let month = 0; month < months; month++) {
@@ -528,11 +456,8 @@ export function estimate(plan: CreditPlan, card: RateCard = RATE_CARDS[plan.card
 
   plan.items.forEach((it, i) => {
     const e = items[i]!;
-    if (e.unpriced && (it.perRun > 0 || it.initial > 0)) warnings.push(`${it.label}: ${e.note ?? 'not priced on this card'} Counted as 0 credits.`);
+    if (e.unpriced && (it.perRun > 0 || it.initial > 0)) warnings.push(`${it.label}: ${e.note ?? 'not on the Flex rate card.'} Counted as 0 credits.`);
   });
-  if (plan.items.some((it) => it.env === 'sandbox') && card.sandboxPool === 'separate') {
-    warnings.push(`Sandbox usage draws on separate ${card.credits} for Sandbox, so it is shown apart and not counted against the entitlement.`);
-  }
 
   const actual = new Map(plan.actuals.map((a) => [a.month, a.credits]));
   let cumulative = 0;
@@ -545,7 +470,7 @@ export function estimate(plan: CreditPlan, card: RateCard = RATE_CARDS[plan.card
       if (u.env === 'production') production += u.monthly[month]!;
       else sandbox += u.monthly[month]!;
     }
-    const pooled = production + (card.sandboxPool === 'shared' ? sandbox : 0);
+    const pooled = production + sandbox;
     const a = actual.get(month + 1);
     cumulative += a ?? pooled;
     const remaining = plan.entitlement !== undefined ? plan.entitlement - cumulative : null;
@@ -559,7 +484,6 @@ export function estimate(plan: CreditPlan, card: RateCard = RATE_CARDS[plan.card
   );
   const order = new Map(Object.keys(card.usageTypes).map((k, i) => [k, i]));
   return {
-    cardId: card.id,
     months: monthRows,
     items,
     usage: [...usage.values()].sort((a, b) => a.env.localeCompare(b.env) || order.get(a.id)! - order.get(b.id)!),
@@ -595,7 +519,7 @@ const RESCANS = new Set<ActivityKind>(['segmentation', 'ci_batch', 'activation_b
  * the `limit` costliest candidates are tried: each try is a full estimate, and a small activity
  * can't save much.
  */
-export function levers(plan: CreditPlan, card: RateCard = RATE_CARDS[plan.cardId], base = estimate(plan, card), limit = 12): Lever[] {
+export function levers(plan: CreditPlan, card: RateCard = RATE_CARD, base = estimate(plan, card), limit = 12): Lever[] {
   const out: Lever[] = [];
   const cost = new Map(base.items.map((e) => [e.id, e.total]));
   const candidates = plan.items
