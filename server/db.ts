@@ -24,6 +24,18 @@ export interface Migration {
 const MIGRATIONS_TABLE =
   'create table if not exists d1_migrations (id integer primary key autoincrement, name text unique, applied_at timestamp not null default current_timestamp)';
 
+/**
+ * Migrations that were deployed under an earlier name. A database that recorded the old name has
+ * already run the SQL, so the new name is recorded without running it again.
+ * 0005_query_estimates.sql shipped (PR #19) and was renumbered when PR #20 took 0005; running its
+ * ALTER TABLE twice fails with "duplicate column name: est_rows" on every request.
+ */
+export const RENAMED_MIGRATIONS: Record<string, string[]> = {
+  '0006_query_estimates.sql': ['0005_query_estimates.sql'],
+};
+
+const ranAs = (name: string, done: Set<string>) => (RENAMED_MIGRATIONS[name] ?? []).some((old) => done.has(old));
+
 /** Splits a migration file into statements. Our migrations keep `;` and `--` out of string literals. */
 export function splitStatements(sql: string): string[] {
   return sql
@@ -47,6 +59,10 @@ export async function migrateD1(db: SqlDatabase, migrations: Migration[]): Promi
   const ran: string[] = [];
   for (const m of [...migrations].sort((a, b) => a.name.localeCompare(b.name))) {
     if (done.has(m.name)) continue;
+    if (ranAs(m.name, done)) {
+      await db.prepare('insert or ignore into d1_migrations (name) values (?)').bind(m.name).run();
+      continue;
+    }
     try {
       await db.batch([...splitStatements(m.sql).map((q) => db.prepare(q)), db.prepare('insert into d1_migrations (name) values (?)').bind(m.name)]);
       ran.push(m.name);
@@ -109,6 +125,10 @@ export function migrateNodeSqlite(db: NodeSqlite, migrations: Migration[]): stri
   const applied: string[] = [];
   for (const m of [...migrations].sort((a, b) => a.name.localeCompare(b.name))) {
     if (done.has(m.name)) continue;
+    if (ranAs(m.name, done)) {
+      db.prepare('insert or ignore into d1_migrations (name) values (?)').run(m.name);
+      continue;
+    }
     db.exec('begin');
     try {
       db.exec(m.sql);

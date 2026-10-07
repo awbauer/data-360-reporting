@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Suspense, lazy, useEffect } from 'react';
 import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
-import { api, type SessionInfo } from './api';
+import { ApiError, NETWORK_ERROR, api, type SessionInfo } from './api';
 import { UserMenu } from './components/UserMenu';
 import { WorkbenchProvider, useWorkbench } from './context';
 import { forgetLegacyData } from './lib/storage';
@@ -22,7 +22,16 @@ export function App() {
   const session = useQuery({ queryKey: ['session'], queryFn: api.session, staleTime: Infinity, retry: 1 });
   useEffect(() => forgetLegacyData(), []);
   if (session.isLoading) return <div className="hint">Loading…</div>;
-  if (session.error || !session.data) return <div className="hint">Could not reach the server: {session.error?.message}</div>;
+  if (session.error || !session.data) {
+    const offline = session.error instanceof ApiError && session.error.status === NETWORK_ERROR;
+    return (
+      <div className="hint" role="alert">
+        {offline ? '' : 'The workbench can’t start: '}
+        {session.error?.message ?? 'No response from the server.'}{' '}
+        <button className="link" onClick={() => void session.refetch()}>Try again</button>
+      </div>
+    );
+  }
   const s = session.data;
   if (!s.user) return <SignIn session={s} />;
   if (!s.user.allowed || s.user.blocked) return <NotAllowed session={s} />;

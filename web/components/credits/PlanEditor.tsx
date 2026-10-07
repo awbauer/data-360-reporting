@@ -137,10 +137,15 @@ function Editor({ stored, onReload, onDuplicate, onDelete }: {
   }, []);
 
   const keepMine = async () => {
-    const current = await api.plans.get(id);
-    base.current = current.updatedAt;
-    blocked.current = false;
-    flush();
+    try {
+      const current = await api.plans.get(id);
+      base.current = current.updatedAt;
+      blocked.current = false;
+      flush();
+    } catch (e) {
+      setSaveError((e as Error).message);
+      setSaveState('error');
+    }
   };
 
   const set = <K extends keyof CreditPlan>(k: K, v: CreditPlan[K] | undefined) =>

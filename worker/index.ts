@@ -2,6 +2,7 @@ import { createApp, purgeExpired } from '../server/app';
 import { createAuth } from '../server/auth';
 import { loadConfig, type Config } from '../server/config';
 import { migrateD1, type SqlDatabase } from '../server/db';
+import { startupFailure } from '../server/startup';
 import { createStore } from '../server/store';
 import { MIGRATIONS } from './migrations';
 
@@ -32,18 +33,23 @@ function configFrom(env: Env, origin?: string): Config {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (!app) {
-      if (!env.DB) return new Response('D1 binding "DB" is missing: see wrangler.jsonc', { status: 500 });
+      if (!env.DB) return startupFailure(request, 'The server is misconfigured: its database (D1 binding "DB") is missing. See wrangler.jsonc.');
       // Once per isolate; a failure is retried on the next request rather than cached.
       try {
         await (migrated ??= migrateD1(env.DB, MIGRATIONS).then((ran) => ran.length && console.log(`Applied D1 migrations: ${ran.join(', ')}`)));
       } catch (e) {
         migrated = undefined;
         console.error(e);
-        return new Response('Database migration failed; see the Worker logs.', { status: 500 });
+        return startupFailure(request, 'The server could not update its database, so it can’t handle requests yet. An admin can see why in the Worker logs.');
       }
-      const config = configFrom(env, new URL(request.url).origin);
-      const store = createStore(env.DB);
-      app = createApp({ config, auth: createAuth(config, env.DB, { store }), store, fetch: (url, init) => fetch(url, init) });
+      try {
+        const config = configFrom(env, new URL(request.url).origin);
+        const store = createStore(env.DB);
+        app = createApp({ config, auth: createAuth(config, env.DB, { store }), store, fetch: (url, init) => fetch(url, init) });
+      } catch (e) {
+        console.error(e);
+        return startupFailure(request, 'The server could not start: its configuration is invalid. An admin can see why in the Worker logs.');
+      }
     }
     return app.fetch(request, env);
   },
