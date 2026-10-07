@@ -1,4 +1,8 @@
-import { useMemo, useState, useSyncExternalStore } from 'react';
+import { Suspense, lazy, useMemo, useState, useSyncExternalStore } from 'react';
+
+// The credit cards bring the rate cards and estimator with them: loaded when an object is opened.
+const ObjectCredits = lazy(() => import('../components/credits/ObjectCredits').then((m) => ({ default: m.ObjectCredits })));
+const InsightCredits = lazy(() => import('../components/credits/ObjectCredits').then((m) => ({ default: m.InsightCredits })));
 import { Link, NavLink, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { buildJoinSql, cardinalityText } from '@shared/join';
 import { buildPreviewSql, buildProfileBatches, buildRowCountSql, parseProfileRows, quoteIdent, type ObjectProfile } from '@shared/sql';
@@ -11,7 +15,8 @@ import { RelationshipMap } from '../components/RelationshipMap';
 import { useWorkbench } from '../context';
 import { fmtAgo, fmtNum, fmtPct } from '../lib/format';
 import { cachedCounts, countCache, getCountsVersion, profileCache, subscribeCounts } from '../lib/storage';
-import { InsightCredits, ObjectCredits } from '../components/credits/ObjectCredits';
+import { dmoOrigin, objectKey, type DmoOrigin } from '@shared/dmo-names';
+import { useStandardDmos } from '../lib/standardDmos';
 import { creditsFor, fmtEstCredits, fmtRows } from '@shared/estimate';
 import { profileRows } from '@shared/estimate';
 import { exampleCost } from '../lib/estimateText';
@@ -25,15 +30,18 @@ export function Explorer() {
   const [q, setQ] = useState('');
   const [kind, setKind] = useState<'all' | ObjectKind>('all');
   const [category, setCategory] = useState('all');
+  const [origin, setOrigin] = useState<'all' | DmoOrigin>('all');
+  const standard = useStandardDmos();
 
   const categories = useMemo(() => [...new Set(wb.objects.map((o) => o.category))].sort(), [wb.objects]);
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return wb.objects
       .filter((o) => (kind === 'all' || o.kind === kind) && (category === 'all' || o.category === category))
+      .filter((o) => origin === 'all' || (o.kind === 'dmo' && standard !== null && dmoOrigin(o.name, standard.keys) === origin))
       .filter((o) => !needle || o.name.toLowerCase().includes(needle) || o.label.toLowerCase().includes(needle))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [wb.objects, q, kind, category]);
+  }, [wb.objects, q, kind, category, origin, standard]);
 
   if (wb.metaLoading) return <div className="hint">Reading metadata…</div>;
   if (wb.metaError) return <div className="hint">Could not read metadata: {wb.metaError.message}</div>;
@@ -55,6 +63,12 @@ export function Explorer() {
               {categories.map((c) => <option key={c}>{c}</option>)}
             </select>
           </div>
+          <select value={origin} onChange={(e) => setOrigin(e.target.value as 'all' | DmoOrigin)} aria-label="Origin" title="Data model objects only: Salesforce's standard set, identity resolution output, or the org's own">
+            <option value="all">Any origin</option>
+            <option value="standard">Standard DMOs</option>
+            <option value="custom">Custom DMOs</option>
+            <option value="identity">Identity resolution DMOs</option>
+          </select>
         </div>
         <div className="list">
           {filtered.slice(0, MAX_LIST).map((o) => (
@@ -173,6 +187,7 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
             <h1>{obj.label}</h1>
             <span className={`badge ${obj.kind}`}>{KIND_LABEL[obj.kind]}</span>
             <span className="badge">{obj.category}</span>
+            {obj.kind === 'dmo' && <OriginBadge name={obj.name} />}
           </div>
           <code className="muted">{obj.name}</code>
         </div>
@@ -249,7 +264,9 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
         </table>
       </div>
 
-      {obj.kind === 'ci' ? <InsightCredits obj={obj} counts={counts} /> : <ObjectCredits obj={obj} counts={counts} />}
+      <Suspense fallback={null}>
+        {obj.kind === 'ci' ? <InsightCredits obj={obj} counts={counts} /> : <ObjectCredits obj={obj} counts={counts} />}
+      </Suspense>
 
       {obj.kind === 'ci' ? <InsightDefinitionCard obj={obj} /> : <Lineage obj={obj} />}
 
@@ -305,7 +322,7 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
           {count
             ? `${fmtRows(count.rows)} rows × ${batches.length} ${batches.length === 1 ? 'query' : 'queries'}: roughly ${fmtEstCredits(creditsFor(profileRows(count.rows, batches.length)))} credits.`
             : `${exampleCost()}, once per query. This object hasn't been counted, so its size is unknown.`}{' '}
-          An estimate: Salesforce reports no credit usage.
+          An estimate: a query reports no credits of its own. What the org actually consumed is under Credits, Actual consumption.
         </p>
       </ConfirmDialog>
     </div>
@@ -320,4 +337,22 @@ function FieldRows({ children, detail, expanded, colSpan }: { children: React.Re
       {expanded && <tr><td colSpan={colSpan} style={{ background: 'var(--surface-2)' }}>{detail}</td></tr>}
     </>
   );
+}
+
+/** Standard (with Salesforce's reference page), identity resolution output, or the org's own. */
+function OriginBadge({ name }: { name: string }) {
+  const standard = useStandardDmos();
+  if (!standard) return null;
+  const origin = dmoOrigin(name, standard.keys);
+  if (origin === 'standard') {
+    const ref = standard.byKey.get(objectKey(name))!;
+    return (
+      <a className="badge" href={ref.url} target="_blank" rel="noreferrer" title={`Salesforce's standard ${ref.label} DMO: open its reference page`}>
+        standard ↗
+      </a>
+    );
+  }
+  return origin === 'identity'
+    ? <span className="badge" title="Generated by identity resolution for its ruleset">identity resolution</span>
+    : <span className="badge" title="Not in Salesforce's standard DMO index: defined in this org">custom</span>;
 }

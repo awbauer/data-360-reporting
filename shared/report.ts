@@ -2,7 +2,9 @@
 // only from metadata and list responses already loaded, plus aggregates cached in the browser,
 // so exporting never runs a query and never contains row data.
 import { toCsvLine } from './csv';
+import { dmoOrigin, objectKey } from './dmo-names';
 import { computeOverview } from './overview';
+import { STANDARD_DMOS } from './standard-dmos';
 import type { ObjectProfile } from './sql';
 import type { Extras, ObjectKind, ObjectMeta, Relationship } from './types';
 
@@ -28,6 +30,9 @@ export interface CachedStats {
   counts: Record<string, { rows: number; at: string }>;
   profiles: Record<string, ObjectProfile>;
 }
+
+const STANDARD_KEYS = new Set(STANDARD_DMOS.map((d) => d.key));
+const STANDARD_BY_KEY = new Map(STANDARD_DMOS.map((d) => [d.key, d]));
 
 const KIND: Record<ObjectKind, string> = { dmo: 'Data model object', dlo: 'Data lake object', ci: 'Calculated insight' };
 const pct = (x: number) => Math.round(x * 1000) / 10;
@@ -73,12 +78,17 @@ export function dictionaryTables(objects: ObjectMeta[], cached: CachedStats, ctx
   const objectsTable: Table = {
     name: 'objects',
     title: 'Objects',
-    header: ['Object', 'Label', 'Kind', 'Category', 'Fields', 'Primary key', 'Relationships', 'Rows (cached)', 'Rows counted at', 'Profiled at'],
+    header: [
+      'Object', 'Label', 'Kind', 'Category', 'Fields', 'Primary key', 'Relationships', 'Rows (cached)', 'Rows counted at', 'Profiled at',
+      'DMO origin', 'Salesforce reference',
+    ],
     rows: sorted.map((o) => {
       const c = cached.counts[o.name];
+      const origin = o.kind === 'dmo' ? dmoOrigin(o.name, STANDARD_KEYS) : null;
       return [
         o.name, o.label, KIND[o.kind], o.category, o.fields.length, o.primaryKeys.join(', '), relCount.get(o.name) ?? 0,
         c?.rows ?? null, c?.at ?? null, cached.profiles[o.name]?.computedAt ?? null,
+        origin === 'identity' ? 'identity resolution' : origin, origin === 'standard' ? STANDARD_BY_KEY.get(objectKey(o.name))!.url : null,
       ];
     }),
   };

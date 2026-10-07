@@ -17,14 +17,13 @@ export function CardPicker() {
   );
 }
 
-/** Credits, with list-price money beside them when the card has a published price. */
-export function Credits({ value, card }: { value: number; card: RateCard }) {
+/** Credits, with list-price money beside them when the card has one and it's at least a cent. */
+export function Credits({ value, card, unit }: { value: number; card: RateCard; unit?: string }) {
+  const money = card.listPricePer100k !== undefined ? (value / 100_000) * card.listPricePer100k : 0;
   return (
     <>
-      {fmtCredits(value)}
-      {card.listPricePer100k !== undefined && value > 0 && (
-        <span className="muted small"> ≈ {fmtMoney((value / 100_000) * card.listPricePer100k)}</span>
-      )}
+      {fmtCredits(value)}{unit ? ` ${unit}` : ''}
+      {money >= 0.01 && <span className="muted small"> ≈ {fmtMoney(money)}</span>}
     </>
   );
 }

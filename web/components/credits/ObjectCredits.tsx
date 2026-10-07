@@ -1,14 +1,16 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { estimate, newPlan, type CreditPlan } from '@shared/credits';
 import { insightForecast, objectForecast, type Counts } from '@shared/credit-forecast';
+import { attributedCredits, summarize } from '@shared/consumption';
+import { useCachedConsumption } from '../../lib/consumption';
 import type { SeedCandidate } from '@shared/credits-seed';
 import type { ObjectMeta } from '@shared/types';
 import { api } from '../../api';
 import { useWorkbench } from '../../context';
 import { useRateCard } from '../../lib/creditPrefs';
-import { fmtCredits, fmtNum } from '../../lib/format';
+import { fmtAgo, fmtCredits, fmtNum } from '../../lib/format';
 import { useOrgSeed } from '../../lib/useOrgSeed';
 import { useStreamsFor } from '../Lineage';
 import { CardPicker, Credits, ForecastCard } from './Forecast';
@@ -20,7 +22,49 @@ export function ObjectCredits({ obj, counts }: { obj: ObjectMeta; counts: Counts
   const key = streams.map((s) => s.name).join('|');
   // `streams` is a fresh array each render; `key` says when its contents change.
   const f = useMemo(() => objectForecast(card, obj, counts, { streams }), [card, obj, counts, key]);
-  return <ForecastCard title="Credits for common actions" forecast={f} context={obj.label} what="object" />;
+  const names = [obj.name, obj.label, ...streams.flatMap((s) => [s.name, s.label])];
+  return (
+    <ForecastCard title="Credits for common actions" forecast={f} context={obj.label} what="object">
+      <ActualLine names={names} quietIfNone={obj.kind === 'dmo'} />
+    </ForecastCard>
+  );
+}
+
+/**
+ * What this thing really consumed lately, from the hourly consumption feed, if it has been read
+ * (Credits, Actual consumption). Matched on its API name or label.
+ */
+export function ActualLine({ names, quietIfNone, estimate }: {
+  names: string[];
+  quietIfNone?: boolean;
+  /** The forecast for a month at its schedule, to flag when reality is far from it. */
+  estimate?: { monthly: number; label: string };
+}) {
+  const data = useCachedConsumption();
+  const [card] = useRateCard();
+  if (!data?.sources.resources) return null;
+  const { credits, matched } = attributedCredits(data.resources, names);
+  if (!matched.length) {
+    return quietIfNone ? null : (
+      <div className="small muted actual-line">Nothing consumed under this name since {data.resourcesSince} (consumption read {fmtAgo(data.at)}).</div>
+    );
+  }
+  // Actuals cover ~30 days, so they compare with a month of the forecast.
+  const ratio = estimate && estimate.monthly > 0 ? credits / estimate.monthly : null;
+  const far = ratio !== null && (ratio > 2 || ratio < 0.5);
+  return (
+    <div className="small actual-line">
+      <b>Actually consumed since {data.resourcesSince}: <Credits value={credits} card={card} unit="credits" /></b>
+      <span className="muted"> ({matched.map((m) => m.resourceType ?? m.resource).join(', ')}; read {fmtAgo(data.at)}, <Link to="/credits/actual">details</Link>)</span>
+      {far && (
+        <div className="actual-gap">
+          That’s {ratio! >= 1 ? `${fmtRatio(ratio!)}× more than` : `${fmtRatio(1 / ratio!)}× less than`} the estimate {estimate!.label} ({fmtCredits(estimate!.monthly)} a month).
+          The estimate’s inputs don’t match how it really runs: the objects it reads may be bigger than counted, or it may run more
+          {ratio! >= 1 ? ' often' : ' rarely'} than its schedule says.
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** An insight's run, its schedule and the alternatives, from the objects its SQL reads. */
@@ -32,10 +76,21 @@ export function InsightCredits({ obj, counts }: { obj: ObjectMeta; counts: Count
   const f = useMemo(() => insightForecast(card, obj, def.data, wb.objects, counts), [card, obj, def.data, wb.objects, counts]);
   return (
     <ForecastCard title="Credits for this insight" forecast={f} context={obj.label} what="insight">
+      <ActualLine names={[obj.name, obj.label]} estimate={scheduleEstimate(f)} />
       {def.isLoading && <div className="small muted">Reading the definition…</div>}
       {def.error && <div className="small muted">The definition isn’t available ({def.error.message}), so the objects it reads are unknown.</div>}
     </ForecastCard>
   );
+}
+
+const fmtRatio = (r: number) => (r >= 10 ? Math.round(r).toLocaleString('en-US') : r.toFixed(1));
+
+/** The forecast's month at the thing's own schedule, or daily when it has none, for comparing with actuals. */
+export function scheduleEstimate(f: { actions: { id: string; monthly: number | null; label: string }[] }): { monthly: number; label: string } | undefined {
+  const own = f.actions.find((a) => a.id === 'schedule');
+  if (own?.monthly != null) return { monthly: own.monthly, label: own.label.replace(/^At its schedule/, 'at its schedule') };
+  const daily = f.actions.find((a) => a.id === 'every-24');
+  return daily?.monthly != null ? { monthly: daily.monthly, label: 'if run daily' } : undefined;
 }
 
 const GROUPS: SeedCandidate['group'][] = ['Data streams', 'Identity resolution', 'Calculated insights', 'Segments', 'Activations'];
@@ -52,6 +107,8 @@ export function OrgCredits({ countsVersion }: { countsVersion: string }) {
   const [on, setOn] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const seed = useOrgSeed(on, 0.05, countsVersion);
+  const consumption = useCachedConsumption();
+  const actual = consumption?.daily.length ? summarize(consumption) : null;
   const result = useMemo(() => {
     if (!on || seed.loading) return null;
     const plan: CreditPlan = { ...newPlan('run-rate', card.id), months: 1, items: seed.candidates.map((c) => c.item) };
@@ -99,8 +156,16 @@ export function OrgCredits({ countsVersion }: { countsVersion: string }) {
         <>
           <div className="row wrap" style={{ alignItems: 'baseline', gap: 12 }}>
             <div className="tile-num"><Credits value={result.total} card={card} /></div>
-            <div className="muted small">{card.credits} a month</div>
+            <div className="muted small">{card.credits} a month, estimated</div>
           </div>
+          {actual && (
+            <div className="small actual-line">
+              <b>Actually consumed in the last 30 days: {fmtCredits(actual.last30)}</b>{' '}
+              <span className="muted">
+                ({actual.last30 > result.total ? 'more' : 'less'} than estimated, all cards; read {fmtAgo(consumption!.at)}, <Link to="/credits/actual">details</Link>)
+              </span>
+            </div>
+          )}
           <table className="t" style={{ maxWidth: 640, marginTop: 8 }}>
             <thead><tr><th>From</th><th className="num">Activities</th><th className="num">Credits a month</th></tr></thead>
             <tbody>

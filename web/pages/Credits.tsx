@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { FLEX_2026_06, DATA_SERVICES_2025_08, newPlan, type CreditPlan } from '@shared/credits';
 import { api } from '../api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { ActualConsumption } from '../components/credits/ActualConsumption';
 import { PlanEditor } from '../components/credits/PlanEditor';
 import { useOptionalWorkbench } from '../context';
 import { fmtAgo } from '../lib/format';
@@ -62,6 +63,10 @@ export function CreditsPage() {
           </div>
         </div>
         <nav className="list" aria-label="Credit plans">
+          <Link className={`obj-item${id === 'actual' ? ' active' : ''}`} to="/credits/actual">
+            <div className="name">Actual consumption</div>
+            <div className="meta"><span>{wb ? 'what this org really consumed' : 'needs a connected org'}</span></div>
+          </Link>
           {list.isLoading && <div className="hint">Loading…</div>}
           {list.error && <div className="alert error small" style={{ margin: 10 }}>{list.error.message}</div>}
           {list.data?.length === 0 && <div className="hint small">No plans yet.</div>}
@@ -78,7 +83,9 @@ export function CreditsPage() {
       </aside>
       <section>
         {error && <div className="alert error" role="alert" style={{ marginBottom: 12 }}>{error}</div>}
-        {id ? (
+        {id === 'actual' ? (
+          <ActualConsumption />
+        ) : id ? (
           <PlanEditor
             key={id}
             id={id}

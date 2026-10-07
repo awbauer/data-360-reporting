@@ -249,7 +249,7 @@ export interface RunInput {
   paramDefs?: ParamDef[];
   params?: Record<string, string>;
   /** Where the run came from, for the audit log; History shows only `editor` runs. */
-  source?: 'editor' | 'explorer' | 'overview';
+  source?: 'editor' | 'explorer' | 'overview' | 'credits';
   /** Our estimate of rows the run reads, from cached counts (see shared/estimate.ts). */
   estRows?: number;
   /** False when `estRows` is only a lower bound. */

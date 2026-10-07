@@ -57,7 +57,11 @@ describe('data dictionary', () => {
 
   it('includes cached aggregates with their timestamps, and leaves them blank otherwise', () => {
     const ind = objs!.rows.find((r) => r[0] === 'ssot__Individual__dlm')!;
-    expect(ind.slice(7)).toEqual([2500, '2026-10-06T10:00:00Z', '2026-10-06T10:05:00Z']);
+    expect(ind.slice(7, 10)).toEqual([2500, '2026-10-06T10:00:00Z', '2026-10-06T10:05:00Z']);
+    // Which DMOs are Salesforce's standard ones, with their reference page.
+    expect(ind.slice(10)).toEqual(['standard', 'https://developer.salesforce.com/docs/data/data-cloud-dmo-mapping/guide/c360dm-si-individualdmo-dmo.html']);
+    expect(objs!.rows.find((r) => r[0] === 'UnifiedIndividual__dlm')!.slice(10)).toEqual(['identity resolution', null]);
+    expect(objs!.rows.find((r) => r[0] === 'Contact_Home__dll')!.slice(10)).toEqual([null, null]);
     const income = fields!.rows.find((r) => r[0] === 'ssot__Individual__dlm' && r[3] === 'ssot__YearlyIncome__c')!;
     expect(income.slice(10)).toEqual([40, 900, 30000, 150000, '2026-10-06T10:05:00Z']);
     const email = fields!.rows.find((r) => r[0] === 'ssot__ContactPointEmail__dlm')!;

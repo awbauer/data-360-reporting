@@ -6,6 +6,9 @@ import { segmentForecast, segmentMonthly, type Counts } from '@shared/credit-for
 import type { SegmentInfo } from '@shared/types';
 import { api } from '../api';
 import { CardPicker, Credits, ForecastCard } from '../components/credits/Forecast';
+import { ActualLine, scheduleEstimate } from '../components/credits/ObjectCredits';
+import { attributedCredits } from '@shared/consumption';
+import { useCachedConsumption } from '../lib/consumption';
 import { useWorkbench } from '../context';
 import { useRateCard } from '../lib/creditPrefs';
 import { fmtAgo, fmtCompact, fmtNum } from '../lib/format';
@@ -23,6 +26,8 @@ export function SegmentsPage() {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState<string | null>(null);
   const [card] = useRateCard();
+  const consumption = useCachedConsumption();
+  const actuals = consumption?.sources.resources ? consumption : null;
   const listing = extras.data?.segments ?? null;
   const counts = useMemo(() => cachedCounts(host, wb.dataspace, wb.objects), [host, wb.dataspace, wb.objects]);
   const items = useMemo(() => {
@@ -65,7 +70,7 @@ export function SegmentsPage() {
             <div className="grow small">
               {total.priced > 0 ? (
                 <>
-                  <b>About <Credits value={total.credits} card={card} /> {card.credits} a month</b> to refresh the {total.priced} active
+                  <b>About <Credits value={total.credits} card={card} unit={`${card.credits} a month`} /></b> to refresh the {total.priced} active
                   segment{total.priced === 1 ? '' : 's'} that can be priced{total.priced < total.active ? ` (of ${total.active})` : ''}, at their publish schedules.{' '}
                 </>
               ) : (
@@ -74,7 +79,10 @@ export function SegmentsPage() {
               <span className="muted">
                 Every refresh reads all rows of the objects a segment uses, whatever its member count, so the size of those objects and how
                 often it publishes are what cost. Sizes come from row counts cached on the <Link to="/overview">Overview</Link>
-                {' '}({Object.keys(counts).length} of {wb.objects.length} objects counted). Activation is extra: see a segment’s details.
+                {' '}({Object.keys(counts).length} of {wb.objects.length} objects counted). Activation is extra: see a segment’s details.{' '}
+                {actuals
+                  ? `The Actual column is what each segment really consumed since ${actuals.resourcesSince}, from the org's consumption feed.`
+                  : <>Compare with what each one really consumed: <Link to="/credits/actual">read actual consumption</Link>.</>}
               </span>
             </div>
             <CardPicker />
@@ -97,6 +105,7 @@ export function SegmentsPage() {
                 <th style={{ textAlign: 'right' }}>Members (last)</th><th>Last published</th>
                 <th style={{ textAlign: 'right' }} title="Rows read by each refresh">Rows a refresh</th>
                 <th style={{ textAlign: 'right' }} title={`${card.name}, at the segment's publish schedule`}>Credits a month</th>
+                {actuals && <th style={{ textAlign: 'right' }} title={`Consumed since ${actuals.resourcesSince}, from the hourly consumption feed`}>Actual, 30 days</th>}
                 <th />
               </tr>
             </thead>
@@ -106,6 +115,7 @@ export function SegmentsPage() {
                   key={s.apiName}
                   s={s}
                   m={monthly.get(s.apiName)!}
+                  actual={actuals ? attributedCredits(actuals.resources, [s.apiName, s.label]).credits : null}
                   counts={counts}
                   open={open === s.apiName}
                   onToggle={() => setOpen(open === s.apiName ? null : s.apiName)}
@@ -119,9 +129,11 @@ export function SegmentsPage() {
   );
 }
 
-function SegmentRow({ s, m, counts, open, onToggle }: {
+function SegmentRow({ s, m, actual, counts, open, onToggle }: {
   s: SegmentInfo;
   m: ReturnType<typeof segmentMonthly>;
+  /** Credits it really consumed lately; null when consumption hasn't been read. */
+  actual: number | null;
   counts: Counts;
   open: boolean;
   onToggle: () => void;
@@ -149,6 +161,7 @@ function SegmentRow({ s, m, counts, open, onToggle }: {
             </span>
           ) : <span className="muted">–</span>}
         </td>
+        {actual !== null && <td style={{ textAlign: 'right' }}>{actual ? Math.round(actual).toLocaleString('en-US') : <span className="muted">0</span>}</td>}
         <td className="right">
           <button className="link" onClick={onToggle} aria-expanded={open} aria-label={`Details for ${s.label}`}>
             {open ? 'hide' : 'details'}
@@ -157,7 +170,7 @@ function SegmentRow({ s, m, counts, open, onToggle }: {
       </tr>
       {open && (
         <tr>
-          <td colSpan={9} style={{ background: 'var(--surface-2)' }}>
+          <td colSpan={actual !== null ? 10 : 9} style={{ background: 'var(--surface-2)' }}>
             {(s.publishInterval || s.nextPublish) && (
               <div className="small muted" style={{ marginBottom: 8 }}>
                 {s.publishInterval ? `Publishes ${describePublishInterval(s.publishInterval)}` : 'Publish schedule unknown'}
@@ -174,7 +187,9 @@ function SegmentRow({ s, m, counts, open, onToggle }: {
             )}
             {forecast && (
               <div style={{ marginTop: 12 }}>
-                <ForecastCard title="Credits for this segment" forecast={forecast} context={s.label} what="segment" />
+                <ForecastCard title="Credits for this segment" forecast={forecast} context={s.label} what="segment">
+                  <ActualLine names={[s.apiName, s.label]} estimate={scheduleEstimate(forecast)} />
+                </ForecastCard>
               </div>
             )}
           </td>

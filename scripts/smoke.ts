@@ -14,6 +14,7 @@ import { buildDateHistogramSql, buildNumericHistogramSql, buildRangeSql, parseRa
 import { loadConfig } from '../server/config';
 import { createConnectClient, type SessionHolder } from '../server/data360/client';
 import { UpstreamError } from '../server/data360/types';
+import { dailySql, findSources, isoDay, pickSources } from '../shared/consumption';
 import { assertAllowedOrigin } from '../server/hosts';
 
 function credentials(): { accessToken: string; instanceUrl: string } {
@@ -193,6 +194,26 @@ if (insight) {
     console.log(`   normalized: expression=${Boolean(d.expression)} status=${d.status ?? '-'} lastRunAt=${d.lastRunAt ?? '-'} dims=${d.dimensions.length} measures=${d.measures.length} formulas=${[...d.dimensions, ...d.measures].filter((f) => f.formula).length}`);
   });
 }
+
+// Credits > Actual consumption reads Digital Wallet's feeds when they're in the data space. Prints
+// which objects and fields it found (names only) and runs one small daily query to prove the SQL.
+await step(`Consumption feeds (${dataspace})`, async () => {
+  const sources = findSources(meta?.objects ?? []);
+  if (!sources.length) {
+    console.log('   none: no Tenant*EntitlementConsumption / TenantEntitlementTransaction / Tenant Consumption Insights object in this data space');
+    return;
+  }
+  for (const src of sources) {
+    const found = Object.entries(src.fields).map(([r, f]) => `${r}=${f!.name}(${f!.type})`).join(' ');
+    console.log(`   ${src.kind}: ${src.object.name} ${found}${src.missing.length ? ` · missing: ${src.missing.join(', ')}` : ''}`);
+  }
+  const { totals } = pickSources(sources);
+  if (!totals) return;
+  const q = dailySql(totals, isoDay(Date.now() - 3 * 86_400_000));
+  const r = await client.submitQuery({ sql: q.sql, dataspace, params: [{ name: 'since', type: 'Date', value: q.since }], rowLimit: 10 });
+  console.log(`   daily query on ${totals.object.name}: ${r.rowCount} rows, columns ${(r.columns ?? []).map((c) => `${c.name}:${c.type}`).join(', ')}`);
+  await client.cancel(r.queryId, dataspace).catch(() => undefined);
+});
 
 await step('Identity resolution rulesets (/ssot/identity-resolutions)', async () => {
   const res = await authedGet('/identity-resolutions');

@@ -84,6 +84,39 @@ test('credit plans: estimate without an org, persist, export, then seed from the
   await lever.getByRole('button', { name: 'Apply' }).click();
   await expect(row(page, 'Web SDK Events').getByText('not billed')).toBeVisible();
 
+  // Actual consumption, read from the mock org's Digital Wallet feeds (on request, with its cost stated).
+  await expect(page.getByRole('status').filter({ hasText: /^Saved$/ })).toBeVisible({ timeout: 10_000 });
+  await page.getByRole('link', { name: /Actual consumption/ }).click();
+  await expect(page.getByRole('heading', { name: 'Actual consumption' })).toBeVisible();
+  await expect(page.getByText('Where this comes from')).toBeVisible();
+  await page.getByRole('button', { name: /^Read consumption \(4 queries/ }).click();
+  await expect(page.locator('.tile', { hasText: 'last 30 days' })).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.tile', { hasText: 'purchased' })).toContainText(/left of 1,600,000 purchased/);
+  const top = page.locator('section', { hasText: 'What consumed it' });
+  await expect(top.getByRole('row').nth(1)).toContainText('Individual_Default_Ruleset');
+  await expect(top.getByRole('link', { name: 'Lapsed VIPs' })).toBeVisible();
+
+  // Track the plan against it: months since its start, Data 360 card only, production only.
+  const d = new Date();
+  const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 3, 1)).toISOString().slice(0, 7);
+  await page.getByRole('button', { name: 'AgentforceCredits' }).click(); // leave Agentforce out
+  await page.getByRole('link', { name: /Acme year 1/ }).click();
+  await page.getByLabel('Contract start').fill(start);
+  await expect(page.getByRole('status').filter({ hasText: /^Saved$/ })).toBeVisible({ timeout: 10_000 });
+  await page.getByRole('link', { name: /Actual consumption/ }).click();
+  await page.getByRole('button', { name: 'Fill actuals' }).click();
+  await expect(page.getByText('Filled 3 months of “Acme year 1”.')).toBeVisible();
+  await page.getByRole('link', { name: 'Open the plan' }).click();
+  await expect(page.getByText('(3 months entered)')).toBeVisible();
+
+  // Beside the estimates: each segment's actual consumption.
+  await page.getByRole('link', { name: 'Segments' }).click();
+  await expect(page.getByRole('columnheader', { name: 'Actual, 30 days' })).toBeVisible();
+  await page.getByRole('button', { name: 'Details for Lapsed VIPs' }).click();
+  await expect(page.locator('.forecast-card .actual-line')).toContainText(/Actually consumed since .*: [\d,]+/);
+  await page.getByRole('link', { name: 'Credits', exact: true }).click();
+  await page.getByRole('link', { name: /Acme year 1/ }).click();
+
   // Delete.
   await page.getByRole('button', { name: 'Delete', exact: true }).click();
   await page.getByRole('button', { name: 'Delete plan' }).click();

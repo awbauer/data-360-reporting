@@ -4,6 +4,7 @@
 // Row volumes come from row counts the browser cached; with none, actions are priced per million.
 import { classifyStream, objectsMentioned } from './credits-seed';
 import { ACTIVITY, DAILY, estimate, newItem, newPlan, scheduleRuns, type ActivityKind, type PlanItem, type RateCard } from './credits';
+import { objectKey } from './dmo-names';
 import { describePublishInterval } from './schedule';
 import type { InsightDefinition, ObjectMeta, SegmentInfo, StreamInfo } from './types';
 
@@ -71,9 +72,13 @@ const everyHours = (h: number) => (DAILY * 24) / h;
 /** "every 24 hours", "daily": the API's schedule spellings in words (insight intervals are hours). */
 const scheduleText = (s: string) => describePublishInterval(s);
 
-/** Objects identity resolution counts as source profiles (not the unified results). */
+/**
+ * Objects identity resolution counts as source profiles: Individual and Account, in whichever
+ * spelling the org has (ssot__Individual__dlm, a standard Individual_std__dlm...), not their
+ * unified results or link objects.
+ */
 export function isSourceProfile(o: ObjectMeta): boolean {
-  return o.kind === 'dmo' && /profile/i.test(o.category) && /individual|account/i.test(o.name) && !/unified|identitylink|link__/i.test(o.name);
+  return o.kind === 'dmo' && ['individual', 'account'].includes(objectKey(o.name));
 }
 
 /** Common actions on a data model or data lake object. `streams` are the ones that load a DLO. */

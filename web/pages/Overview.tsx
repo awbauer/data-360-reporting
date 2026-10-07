@@ -1,5 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { Suspense, lazy, useMemo, useState } from 'react';
+
+// Loaded when the Overview shows it, with the estimator it needs.
+const OrgCredits = lazy(() => import('../components/credits/ObjectCredits').then((m) => ({ default: m.OrgCredits })));
 import { Link } from 'react-router-dom';
 import type { Extras, Listing, SegmentInfo, StreamInfo } from '@shared/types';
 import { api } from '../api';
@@ -10,13 +13,22 @@ import { fmtAgo, fmtNum } from '../lib/format';
 import { computeOverview } from '@shared/overview';
 import { QUERY_CREDITS_PER_MILLION, creditsFor, fmtEstCredits, fmtRows } from '@shared/estimate';
 import { exampleCost } from '../lib/estimateText';
-import { OrgCredits } from '../components/credits/ObjectCredits';
+import { dmoOrigin } from '@shared/dmo-names';
+import { useStandardDmos } from '../lib/standardDmos';
 import { exportDictionary, exportHealth, type DictionaryFormat, type HealthFormat } from '../lib/exports';
 import { useRowCounts } from '../lib/useRowCounts';
 
 export function Overview() {
   const wb = useWorkbench();
   const stats = useMemo(() => computeOverview(wb.objects), [wb.objects]);
+  // Standard (Salesforce's index), identity resolution output, or the org's own.
+  const standard = useStandardDmos();
+  const originSummary = useMemo(() => {
+    if (!standard) return '';
+    const n = { standard: 0, identity: 0, custom: 0 };
+    for (const o of wb.objects) if (o.kind === 'dmo') n[dmoOrigin(o.name, standard.keys)]++;
+    return `${n.standard} standard, ${n.custom} custom${n.identity ? `, ${n.identity} from identity resolution` : ''}`;
+  }, [standard, wb.objects]);
   const rc = useRowCounts(wb.session.instanceHost ?? '', wb.dataspace, wb.objects);
   const [confirm, setConfirm] = useState(false);
   const host = wb.session.instanceHost ?? '';
@@ -65,7 +77,7 @@ export function Overview() {
       <Exports extrasLoading={extras.isLoading} extras={extras.data ?? null} extrasError={extras.error?.message} />
 
       <div className="grid tiles">
-        <Tile n={stats.counts.dmo} label="Data model objects" sub={stats.dmoByCategory.map(([c, n]) => `${n} ${c}`).join(' · ') || undefined} />
+        <Tile n={stats.counts.dmo} label="Data model objects" sub={[stats.dmoByCategory.map(([c, n]) => `${n} ${c}`).join(' · '), originSummary].filter(Boolean).join(' · ') || undefined} />
         <Tile n={stats.counts.dlo} label="Data lake objects" />
         <Tile n={stats.counts.ci} label="Calculated insights" />
         <Tile n={stats.totalFields} label="Fields" />
@@ -147,7 +159,9 @@ export function Overview() {
         )}
       </section>
 
-      <OrgCredits countsVersion={`${counted.length}:${totalRows}`} />
+      <Suspense fallback={null}>
+        <OrgCredits countsVersion={`${counted.length}:${totalRows}`} />
+      </Suspense>
 
       <section className="card">
         <h2>Objects without relationships ({stats.isolated.length})</h2>
@@ -183,7 +197,7 @@ export function Overview() {
           {totalRows > 0
             ? `Your cached counts add up to ${fmtRows(totalRows)} rows, so recounting reads about that many: roughly ${fmtEstCredits(creditsFor(totalRows))} credits. ${countable.length - counted.length} objects have never been counted.`
             : `${exampleCost()}. Sizes are unknown until counted.`}{' '}
-          An estimate: Salesforce reports no credit usage.
+          An estimate: a query reports no credits of its own. What the org actually consumed is under Credits, Actual consumption.
         </p>
       </ConfirmDialog>
     </div>
