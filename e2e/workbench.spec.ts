@@ -50,7 +50,7 @@ test('sign in → connect → explore → query → library → admin → discon
   await page.getByPlaceholder(/Search \d+ objects/).fill('individual');
   await page.locator('.obj-item', { hasText: 'Individual' }).first().click();
   await expect(page.getByRole('heading', { name: 'Individual', exact: true })).toBeVisible();
-  await expect(page.getByText('2,500 rows')).toBeVisible(); // from the cached count
+  await expect(page.locator('.kv, .obj-head, main').getByText('2,500 rows', { exact: true }).first()).toBeVisible(); // from the cached count
   await page.getByRole('button', { name: 'Profile fields' }).click();
   await page.getByRole('button', { name: 'Run 1 query' }).click();
   await expect(page.getByText(/profiled just now/)).toBeVisible({ timeout: 20_000 });
@@ -135,7 +135,7 @@ test('sign in → connect → explore → query → library → admin → discon
   await expect(vip).toContainText('312');
   await expect(vip.getByRole('link', { name: 'Unified Individual' })).toBeVisible();
   await vip.getByRole('button', { name: 'rules' }).click();
-  await expect(page.getByText(/Publishes daily · next /)).toBeVisible();
+  await expect(page.getByText(/Publishes every 24 hours · next /)).toBeVisible();
   await expect(page.locator('pre.sql').first()).toContainText('"operator": "greaterThan"');
   await expect(page.getByRole('row', { name: /Draft Test/ }).getByRole('button', { name: 'rules' })).toBeDisabled();
 
@@ -163,6 +163,12 @@ test('sign in → connect → explore → query → library → admin → discon
   await page.getByRole('button', { name: 'Preview 100 rows' }).click();
   await expect(status).toContainText('100 rows', { timeout: 20_000 });
   await expect(panel(page).locator('[role=row]').nth(1)).toContainText('IND-');
+
+  // The editor estimates what the query reads from counts already cached: no query needed to know
+  const chip = panel(page).locator('span.est');
+  await expect(chip).toContainText('est. ≈ <0.01 credits'); // 2,500 rows at 3 credits per million
+  await expect(chip).toHaveAttribute('title', /Reads up to 2,500 rows, about <0\.01 credits at 3 credits per million rows/);
+  await expect(chip).toHaveAttribute('title', /Salesforce reports no credit usage/);
 
   // Autocomplete from metadata
   await setSql(page, 'SELECT * FROM ssot__Ind');
@@ -281,6 +287,15 @@ test('sign in → connect → explore → query → library → admin → discon
   await expect(page.locator('table.t tbody tr', { hasText: 'overview' }).first()).toBeVisible();
   await expect(page.locator('table.t tbody tr', { hasText: 'explorer' }).first()).toBeVisible();
   await expect(page.locator('table.t tbody tr', { hasText: 'failed' }).first()).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Est. credits' })).toBeVisible();
+  await expect(page.getByText(/carried a cost estimate, about .* credits in total/)).toBeVisible();
+  await expect(page.locator('table.t tbody tr', { hasText: '<0.01' }).first()).toBeVisible(); // the Preview run carried its estimate
+
+  // Usage: estimated reads by person and org, with its limits stated
+  await page.getByRole('navigation', { name: 'Admin' }).getByRole('link', { name: 'Usage' }).click();
+  await expect(page.getByText('counts only queries run here')).toBeVisible();
+  await expect(page.locator('table.t tbody tr', { hasText: 'demo@example.com' })).toContainText('mock-org.my.salesforce.com');
+  await expect(page.getByText(/estimated credits/).first()).toBeVisible();
 
   // Users: block someone, and their open session stops working at once
   const other = await browser.newContext({ baseURL: 'http://localhost:4173' });

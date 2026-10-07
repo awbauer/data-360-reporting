@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { api, type LoginEvent } from '../api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { QUERY_CREDITS_PER_MILLION, creditsFor, fmtEstCredits, fmtRows } from '@shared/estimate';
 import { fmtAgo, fmtNum } from '../lib/format';
 import { AuditPage } from './Audit';
 
@@ -16,6 +17,7 @@ export function AdminPage() {
           <NavLink to="/admin/users">Users</NavLink>
           <NavLink to="/admin/sign-ins">Sign-ins</NavLink>
           <NavLink to="/admin/queries">Queries</NavLink>
+          <NavLink to="/admin/usage">Usage</NavLink>
           <NavLink to="/admin/actions">Admin log</NavLink>
         </nav>
       </div>
@@ -25,6 +27,7 @@ export function AdminPage() {
         <Route path="users/:id" element={<UserDetail />} />
         <Route path="sign-ins" element={<SignIns />} />
         <Route path="queries" element={<AuditPage />} />
+        <Route path="usage" element={<Usage />} />
         <Route path="actions" element={<Actions />} />
       </Routes>
     </div>
@@ -260,6 +263,74 @@ function Actions() {
             </tbody>
           </table>
         </div>
+      )}
+    </>
+  );
+}
+
+/** Estimated query usage by person and org. A sizing aid for the engagement, not Salesforce's bill. */
+function Usage() {
+  const [days, setDays] = useState(30);
+  const usage = useQuery({ queryKey: ['admin', 'usage', days], queryFn: () => api.admin.usage(days), staleTime: 0 });
+  const rows = usage.data?.rows ?? [];
+  const sum = (f: (r: (typeof rows)[number]) => number) => rows.reduce((n, r) => n + f(r), 0);
+  const totalRuns = sum((r) => r.runs);
+  const totalEstimated = sum((r) => r.estimatedRuns);
+  const totalCredits = creditsFor(sum((r) => r.estRows));
+  return (
+    <>
+      <div className="row wrap">
+        <div className="muted small grow">
+          Query reads this workbench estimated, by person and org, at {QUERY_CREDITS_PER_MILLION} credits per million rows (the base Flex rate). It counts only queries run here:
+          ingestion, unification, segmentation and activation are not visible to it, and Salesforce reports no credit figures, so reconcile
+          against Salesforce's own usage reports.
+        </div>
+        <label className="small row" style={{ flexDirection: 'row', alignItems: 'center' }}>
+          Last
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="Period">
+            <option value={7}>7 days</option>
+            <option value={30}>30 days</option>
+            <option value={90}>90 days</option>
+          </select>
+        </label>
+      </div>
+      {usage.error && <div className="alert error">{usage.error.message}</div>}
+      {usage.isSuccess && !rows.length && <div className="alert">No queries in this period.</div>}
+      {rows.length > 0 && (
+        <>
+          <div className="card">
+            <b>{fmtEstCredits(totalCredits)} estimated credits</b> from {fmtNum(totalRuns)} queries in the last {days} days.{' '}
+            <span className="muted small">
+              {fmtNum(totalEstimated)} of them carried an estimate; the rest read objects nobody had counted yet, so this is a floor.
+            </span>
+          </div>
+          <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
+            <table className="t">
+              <thead>
+                <tr>
+                  <th>Person</th><th>Org</th><th style={{ textAlign: 'right' }}>Queries</th><th style={{ textAlign: 'right' }}>With estimate</th>
+                  <th style={{ textAlign: 'right' }}>Est. rows read</th><th style={{ textAlign: 'right' }}>Est. credits</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const credits = creditsFor(r.estRows);
+                  return (
+                    <tr key={`${r.userEmail}|${r.instanceHost}`}>
+                      <td>{r.userEmail}</td>
+                      <td>{r.instanceHost}</td>
+                      <td style={{ textAlign: 'right' }}>{fmtNum(r.runs)}</td>
+                      <td style={{ textAlign: 'right' }} title={r.partialRuns ? `${r.partialRuns} of these are lower bounds` : undefined}>{fmtNum(r.estimatedRuns)}{r.partialRuns ? '*' : ''}</td>
+                      <td style={{ textAlign: 'right' }}>{fmtRows(r.estRows)}</td>
+                      <td style={{ textAlign: 'right' }}>{fmtEstCredits(credits)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {rows.some((r) => r.partialRuns > 0) && <div className="small muted">* includes runs whose estimate is a lower bound (an object in the query had never been counted).</div>}
+        </>
       )}
     </>
   );

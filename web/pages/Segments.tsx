@@ -5,6 +5,7 @@ import type { SegmentInfo } from '@shared/types';
 import { api } from '../api';
 import { useWorkbench } from '../context';
 import { fmtAgo, fmtNum } from '../lib/format';
+import { describePublishInterval } from '@shared/schedule';
 import { prettyCriteria, resolveObject } from '../lib/names';
 
 /** Segments in the current data space with their rules, read-only. List data only: no query credits. */
@@ -86,7 +87,7 @@ function SegmentRow({ s, open, onToggle }: { s: SegmentInfo; open: boolean; onTo
           <td colSpan={7} style={{ background: 'var(--surface-2)' }}>
             {(s.publishInterval || s.nextPublish) && (
               <div className="small muted" style={{ marginBottom: 8 }}>
-                {s.publishInterval ? `Publishes ${s.publishInterval.toLowerCase().replace(/_/g, ' ')}` : 'Publish schedule unknown'}
+                {s.publishInterval ? `Publishes ${describePublishInterval(s.publishInterval)}` : 'Publish schedule unknown'}
                 {s.nextPublish ? ` · next ${new Date(s.nextPublish).toLocaleString()}` : ''}
               </div>
             )}

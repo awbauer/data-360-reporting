@@ -5,6 +5,7 @@ import app from '../migrations/0002_app.sql';
 import admin from '../migrations/0003_admin.sql';
 import loginHost from '../migrations/0004_saved_login_host.sql';
 import creditPlans from '../migrations/0005_credit_plans.sql';
+import estimates from '../migrations/0006_query_estimates.sql';
 import type { Migration } from '../server/db';
 
 export const MIGRATIONS: Migration[] = [
@@ -13,4 +14,5 @@ export const MIGRATIONS: Migration[] = [
   { name: '0003_admin.sql', sql: admin },
   { name: '0004_saved_login_host.sql', sql: loginHost },
   { name: '0005_credit_plans.sql', sql: creditPlans },
+  { name: '0006_query_estimates.sql', sql: estimates },
 ];

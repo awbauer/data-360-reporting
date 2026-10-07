@@ -45,9 +45,9 @@ describe('rate cards', () => {
     }
   });
 
-  it('agree with the query rate the Overview quotes', () => {
-    const src = readFileSync(new URL('../web/pages/Overview.tsx', import.meta.url), 'utf8');
-    expect(Number(/const QUERY_RATE = ([\d.]+);/.exec(src)?.[1])).toBe(FLEX_2026_06.usageTypes.queries!.production[0]);
+  it('agree with the query rate the workbench quotes', () => {
+    const src = readFileSync(new URL('../shared/estimate.ts', import.meta.url), 'utf8');
+    expect(Number(/const QUERY_CREDITS_PER_MILLION = ([\d.]+);/.exec(src)?.[1])).toBe(FLEX_2026_06.usageTypes.queries!.production[0]);
   });
 
   it('keep Data Services flat, with the published multipliers', () => {

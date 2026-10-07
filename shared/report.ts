@@ -128,10 +128,15 @@ export function tableToMarkdown(t: Table): string {
   return lines.join('\n');
 }
 
-export function dictionaryMarkdown(tables: Table[]): string {
+/** A document from tables: the first is a key/value summary, the rest become sections. */
+export function tablesToMarkdown(title: string, tables: Table[]): string {
   const [about, ...rest] = tables;
   const head = about!.rows.map(([k, v]) => `- **${mdCell(k)}:** ${mdCell(v)}`).join('\n');
-  return [`# Data dictionary`, head, ...rest.map((t) => `## ${t.title}\n\n${t.rows.length ? tableToMarkdown(t) : '_None._'}`)].join('\n\n') + '\n';
+  return [`# ${title}`, head, ...rest.map((t) => `## ${t.title}\n\n${t.rows.length ? tableToMarkdown(t) : '_None._'}`)].join('\n\n') + '\n';
+}
+
+export function dictionaryMarkdown(tables: Table[]): string {
+  return tablesToMarkdown('Data dictionary', tables);
 }
 
 // -------------------------------------------------------------- health report

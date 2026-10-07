@@ -104,6 +104,27 @@ export interface StreamInfo {
   lastRunRecords?: number;
 }
 
+/** One identity-resolution ruleset (`/ssot/identity-resolutions`). */
+export interface IdentityRuleset {
+  label: string;
+  status?: string;
+  /** The entity it resolves, e.g. Individual. */
+  objectApiName?: string;
+  dataSpace?: string;
+  runsAutomatically?: boolean;
+  lastJobStatus?: string;
+  lastJobCompleted?: string;
+  sourceProfiles?: number;
+  matchedSourceProfiles?: number;
+  totalUnifiedProfiles?: number;
+  knownUnifiedProfiles?: number;
+  anonymousUnifiedProfiles?: number;
+  /** 0 to 1. */
+  consolidationRate?: number;
+  /** The objects the ruleset writes to. */
+  outputs: { entity?: string; linkDmo?: string; unifiedDmo?: string }[];
+}
+
 export interface SegmentInfo {
   apiName: string;
   label: string;

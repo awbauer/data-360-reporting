@@ -174,6 +174,13 @@ Plans live in the `credit_plan` table, one JSON document per plan, at most 50 pe
 
 Data 360 bills queries as consumption credits, by rows scanned: 3 Flex Credits per million rows at the base rate (2 Data Services credits), so queries are rarely what drives a bill. Unification, streaming and frequent segment refreshes are; the Credits page shows by how much. The app never scans data on its own: the Overview uses metadata only, and row counts, profiling and top-values run only when you click, after a confirmation that states how many queries will run. Results are cached in your browser with a timestamp. Counts and profiles are approximate by design (`APPROX_COUNT_DISTINCT`). Running a query with no `LIMIT` asks first (and can add one for you); the guard is a text heuristic, so it can miss a `LIMIT` inside a subquery or warn on an unusual query. It can be silenced for the browser session.
 
+### Credit estimates for queries run here
+
+**Salesforce's API reports no credit consumption at all.** A query's status carries only a result row count; there is no usage endpoint in the Connect API, so nothing in the workbench is a measurement. Every credit figure is an estimate: rows (from counts you already have) times the base-tier Flex multiplier for Data 360 Queries (3 credits per million rows scanned; tiers lower it as a month's usage grows, so this is an upper bound).
+
+- **Query editor, Overview, Explorer:** the editor shows an estimate chip ("est. ≈ 0.4 credits") from the objects the SQL names and the row counts cached in your browser. It assumes every named object is read once in full, and says so when a count is missing or a `LIMIT` might stop the read early. Confirmation dialogs state the same estimate before a count or profile runs.
+- **History, Audit, Admin → Usage:** each run records the estimate it was shown (`est_rows`, `est_complete` on `query_log`), so admins can total estimated rows and credits per user and org. It counts only queries run through this workbench, not what else consumes credits in the org; ingestion, unification, segmentation and activation are what the Credits page is for.
+
 ## Query library
 
 Saved queries are `.sql` files under [`queries/`](queries/README.md) with a small YAML header. To add one, use **Propose to library** in the Query editor (it opens a pre-filled GitHub "new file" page) or open a pull request yourself. CI runs `npm run validate:library` on every change, and the build fails on an invalid file.

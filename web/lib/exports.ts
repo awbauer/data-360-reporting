@@ -24,7 +24,7 @@ const BOM = '\uFEFF';
 const slug = (s: string) => s.replace(/[^A-Za-z0-9.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 const fileBase = (kind: string, ctx: ReportContext) => `${kind}_${slug(ctx.host)}_${slug(ctx.dataspace)}_${ctx.at.toISOString().slice(0, 10)}`;
 
-function save(data: BlobPart, type: string, filename: string): void {
+export function save(data: BlobPart, type: string, filename: string): void {
   const url = URL.createObjectURL(new Blob([data], { type }));
   const a = document.createElement('a');
   a.href = url;
@@ -74,3 +74,5 @@ export async function exportHealth(
   if (format === 'md') save(report.reportMarkdown(r), 'text/markdown;charset=utf-8', `${base}.md`);
   else save(report.reportHtml(r), 'text/html;charset=utf-8', `${base}.html`);
 }
+
+/** The credit plan as a workbook (one sheet per table) or Markdown, with every assumption written down. */

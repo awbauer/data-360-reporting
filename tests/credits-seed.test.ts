@@ -78,7 +78,7 @@ describe('seeding a plan from the org', () => {
     // Built on UnifiedIndividual; criteria read Individual and EmailEngagement.
     expect(vip.item.perRun).toBe(1_600 + 2_500 + 5_000);
     expect(vip.incomplete).toBe(false);
-    expect(vip.item.assumption).toMatch(/Publishes daily\./);
+    expect(vip.item.assumption).toMatch(/Publishes every 24 hours\./);
     expect(c.filter((x) => x.group === 'Segments').map((x) => x.item.label)).not.toContain('Draft Test');
     const act = c.find((x) => x.group === 'Activations' && x.item.source === 'Segment Lapsed_VIPs')!;
     expect(act.item).toMatchObject({ kind: 'activation_batch', perRun: 312 });

@@ -3,6 +3,7 @@
 // cached earlier, so it runs no queries. Every item says how its numbers were arrived at; most are
 // assumptions for the consultant to confirm, and the picker shows them before anything is added.
 import { DAILY, newItem, scheduleRuns, type ActivityKind, type PlanItem } from './credits';
+import { describePublishInterval } from './schedule';
 import type { Extras, InsightDefinition, ObjectMeta, StreamInfo } from './types';
 
 export interface SeedInput {
@@ -161,7 +162,7 @@ export function seedCandidates(input: SeedInput): SeedCandidate[] {
     const a = [
       reads.length ? `Reads ${[r.parts, ...r.missing.map((x) => `${x} (not counted)`)].filter(Boolean).join(', ')}.` : 'Could not tell which objects it reads; enter the rows it reads.',
       sched.known && !sched.manual
-        ? `Publishes ${s.publishInterval!.toLowerCase().replace(/_/g, ' ')}.`
+        ? `Publishes ${describePublishInterval(s.publishInterval)}.`
         : `Publish schedule ${s.publishInterval ? `“${s.publishInterval}”` : 'unknown'}; assumed daily.`,
       ...(r.missing.length ? [COUNT_FIRST] : []),
     ];
