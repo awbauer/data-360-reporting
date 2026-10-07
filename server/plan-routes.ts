@@ -2,7 +2,7 @@ import type { Context, Hono } from 'hono';
 import { z } from 'zod';
 import type { AppUser } from './auth';
 import type { Store } from './store';
-import { ACTIVITIES, MAX_MONTHS, RATE_CARDS, type ActivityKind, type CreditPlan, type RateCardId } from '../shared/credits';
+import { ACTIVITIES, MAX_MONTHS, type ActivityKind, type CreditPlan } from '../shared/credits';
 
 const MAX_PLANS = 50;
 const MAX_BODY_BYTES = 256 * 1024;
@@ -30,7 +30,6 @@ export const planSchema = z.object({
   version: z.literal(1),
   name: z.string().trim().min(1).max(120),
   client: z.string().trim().max(120).optional(),
-  cardId: z.enum(Object.keys(RATE_CARDS) as [RateCardId, ...RateCardId[]]),
   overrides: z.record(z.string().max(64), amount(1e7)).refine((o) => Object.keys(o).length <= 50, 'Too many overrides').optional(),
   start: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Expected YYYY-MM').optional(),
   months: month,

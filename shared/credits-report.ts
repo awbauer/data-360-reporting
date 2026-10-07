@@ -2,7 +2,7 @@
 // the rate card behind them, so an estimate pasted into a proposal can be checked later.
 import {
   ACTIVITY,
-  RATE_CARDS,
+  RATE_CARD,
   UNIT_NAME,
   estimate,
   frequencyOf,
@@ -10,7 +10,6 @@ import {
   monthLabel,
   type CreditPlan,
   type Estimate,
-  type RateCard,
 } from './credits';
 import { tableToMarkdown, type Cell, type Table } from './report';
 
@@ -18,14 +17,8 @@ import { tableToMarkdown, type Cell, type Table } from './report';
 export const roundCredits = (x: number): number => (Math.abs(x) >= 100 ? Math.round(x) : Math.round(x * 100) / 100);
 const share = (x: number, of: number) => (of > 0 ? Math.round((x / of) * 1000) / 10 : 0);
 
-export function otherCard(plan: CreditPlan): RateCard {
-  return Object.values(RATE_CARDS).find((c) => c.id !== plan.cardId)!;
-}
-
 export function planTables(plan: CreditPlan, at: Date, est: Estimate = estimate(plan)): Table[] {
-  const card = RATE_CARDS[plan.cardId];
-  const alt = otherCard(plan);
-  const altEst = estimate({ ...plan, cardId: alt.id }, alt);
+  const card = RATE_CARD;
   const lv = levers(plan, card, est);
   const money = (x: number) => `${Math.round(x).toLocaleString('en-US')} ${plan.currency ?? 'USD'}`;
 
@@ -36,8 +29,7 @@ export function planTables(plan: CreditPlan, at: Date, est: Estimate = estimate(
     rows: [
       ['Plan', plan.name],
       ...(plan.client ? [['Client', plan.client] as Cell[]] : []),
-      ['Rate card', `${card.name}, as of ${card.asOf}`],
-      ['Rate card source', card.source],
+      ['Rate card', card.source],
       ['Contract start', plan.start ?? 'not set'],
       ['Months', plan.months],
       ['Annual growth of recurring volumes %', plan.growthPct],
@@ -48,9 +40,8 @@ export function planTables(plan: CreditPlan, at: Date, est: Estimate = estimate(
       ['Sandbox credits', roundCredits(est.total.sandbox)],
       ['Estimated cost', est.cost !== null ? money(est.cost) : 'no price set'],
       ['Entitlement runs out', plan.entitlement === undefined ? 'no entitlement set' : est.exhaustedMonth ? monthLabel(plan, est.exhaustedMonth) : 'not within the plan'],
-      [`Same plan under ${alt.name}`, roundCredits(altEst.total.pooled)],
       ['Generated', at.toISOString().replace(/\.\d{3}Z$/, 'Z')],
-      ['Note', 'An estimate from the activities and assumptions listed, priced with the rate card named above. Months are average months (365/12 days). Check multipliers against the client’s order form.'],
+      ['Note', 'An estimate from the activities and assumptions listed, priced with the rate card named above. Months are average months (365/12 days).'],
       ...(plan.notes ? [['Plan notes', plan.notes] as Cell[]] : []),
       ...est.warnings.map((w): Cell[] => ['Warning', w]),
     ],
@@ -99,7 +90,7 @@ export function planTables(plan: CreditPlan, at: Date, est: Estimate = estimate(
 
   const rates: Table = {
     name: 'rate-card',
-    title: `Rate card: ${card.name}`,
+    title: `Rate card: ${card.name}, ${card.asOf}`,
     header: ['Usage type', 'Per', 'Production multiplier', 'Sandbox multiplier', 'Override (production)'],
     rows: Object.values(card.usageTypes).map((u) => [
       u.label,
