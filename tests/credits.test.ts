@@ -3,10 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ACTIVITIES,
   DAILY,
-  DATA_SERVICES_2025_08,
-  FLEX_2026_06,
   FREQUENCIES,
-  RATE_CARDS,
+  RATE_CARD,
   chargeRun,
   estimate,
   levers,
@@ -18,27 +16,46 @@ import {
   type CreditPlan,
   type PlanItem,
 } from '../shared/credits';
-import { planMarkdown, planTables, roundCredits } from '../shared/credits-report';
+import { planMarkdown, planTables } from '../shared/credits-report';
 
 let seq = 0;
 const item = (kind: PlanItem['kind'], over: Partial<PlanItem> = {}) => newItem(kind, `i${++seq}`, over);
 const plan = (items: PlanItem[], over: Partial<CreditPlan> = {}): CreditPlan => ({ ...newPlan('Test'), items, ...over });
 
-describe('rate cards', () => {
-  it('map every activity to a usage type of the same unit, or say why not', () => {
-    for (const card of Object.values(RATE_CARDS)) {
-      for (const a of ACTIVITIES) {
-        const m = card.map[a.kind];
-        expect(m, `${card.id} ${a.kind}`).toBeDefined();
-        if (m.usageType) expect(card.usageTypes[m.usageType]?.unit, `${card.id} ${a.kind}`).toBe(a.unit);
-        else expect(m.note, `${card.id} ${a.kind} needs a note`).toBeTruthy();
-      }
+describe('rate card', () => {
+  it('maps every activity to a usage type of the same unit, or says why not', () => {
+    for (const a of ACTIVITIES) {
+      const m = RATE_CARD.map[a.kind];
+      expect(m, a.kind).toBeDefined();
+      if (m.usageType) expect(RATE_CARD.usageTypes[m.usageType]?.unit, a.kind).toBe(a.unit);
+      else expect(m.note, `${a.kind} needs a note`).toBeTruthy();
     }
   });
 
-  it('give Flex four falling tiers per usage type, sandbox at the tier-2 rate', () => {
-    expect(FLEX_2026_06.tiers).toEqual([300_000, 1_500_000, 12_500_000]);
-    for (const u of Object.values(FLEX_2026_06.usageTypes)) {
+  it('matches the Data 360 section of the Flex Credits Rate Card, August 31, 2026', () => {
+    expect(RATE_CARD.asOf).toBe('2026-08-31');
+    expect(RATE_CARD.tiers).toEqual([300_000, 1_500_000, 12_500_000]);
+    const published: Record<string, [string, number[], number]> = {
+      prep: ['Data 360 Prep', [40, 32, 16, 8], 32],
+      unification: ['Data 360 Unification', [75_000, 60_000, 30_000, 15_000], 60_000],
+      segmentation: ['Data 360 Segmentation', [50, 40, 20, 10], 40],
+      activation: ['Data 360 Activation', [60, 48, 24, 12], 48],
+      sharing_out: ['Data 360 Zero-Copy Sharing-Out', [60, 48, 24, 12], 48],
+      queries: ['Data 360 Queries', [3, 2.4, 1.2, 0.6], 2.4],
+      unstructured: ['Data 360 Unstructured Processing', [150, 120, 60, 30], 120],
+      intelligent: ['Data 360 Intelligent Processing', [600, 480, 240, 120], 480],
+      streaming_pipeline: ['Data 360 Streaming Pipeline', [3_500, 2_800, 1_400, 700], 2_800],
+      realtime: ['Data 360 Real-Time Pipeline', [250_000, 200_000, 100_000, 50_000], 200_000],
+      code_extension: ['Data 360 Code Extension', [40, 32, 16, 8], 32],
+    };
+    expect(Object.keys(RATE_CARD.usageTypes).sort()).toEqual(Object.keys(published).sort());
+    for (const [id, [label, production, sandbox]] of Object.entries(published)) {
+      expect(RATE_CARD.usageTypes[id], id).toMatchObject({ label, production, sandbox });
+    }
+  });
+
+  it('gives four falling tiers per usage type, sandbox at the tier-2 rate', () => {
+    for (const u of Object.values(RATE_CARD.usageTypes)) {
       expect(u.production, u.id).toHaveLength(4);
       expect([...u.production].sort((a, b) => b - a)).toEqual(u.production);
       expect(u.sandbox).toBe(u.production[1]);
@@ -47,39 +64,26 @@ describe('rate cards', () => {
 
   it('agree with the query rate the workbench quotes', () => {
     const src = readFileSync(new URL('../shared/estimate.ts', import.meta.url), 'utf8');
-    expect(Number(/const QUERY_CREDITS_PER_MILLION = ([\d.]+);/.exec(src)?.[1])).toBe(FLEX_2026_06.usageTypes.queries!.production[0]);
+    expect(Number(/const QUERY_CREDITS_PER_MILLION = ([\d.]+);/.exec(src)?.[1])).toBe(RATE_CARD.usageTypes.queries!.production[0]);
   });
 
-  it('keep Data Services flat, with the published multipliers', () => {
-    expect(DATA_SERVICES_2025_08.tiers).toBeUndefined();
-    const m = (id: string) => DATA_SERVICES_2025_08.usageTypes[id]!.production;
-    expect(m('pipeline_batch')).toEqual([2_000]);
-    expect(m('unification')).toEqual([100_000]);
-    expect(m('segmentation')).toEqual([20]);
-    expect(m('queries')).toEqual([2]);
-    expect(m('internal')).toEqual([0]);
-  });
 });
 
 describe('charging a run', () => {
   // Trailhead "Maximize Your Data 360 Credits": batch calculated insight on 20 million rows.
-  it('matches the published Data Services example', () => {
-    expect(chargeRun(20, 0, [15], undefined).credits).toBe(300);
-  });
-
   it('matches the published Flex example, including the run that crosses into tier 2', () => {
-    const prep = FLEX_2026_06.usageTypes.prep!.production;
-    expect(chargeRun(20, 0, prep, FLEX_2026_06.tiers).credits).toBe(800);
+    const prep = RATE_CARD.usageTypes.prep!.production;
+    expect(chargeRun(20, 0, prep, RATE_CARD.tiers).credits).toBe(800);
     // 299,600 used; 800 more would end past 300,000, so the whole run bills at tier 2 (32).
-    expect(chargeRun(20, 299_600, prep, FLEX_2026_06.tiers)).toEqual({ credits: 640, tier: 1 });
+    expect(chargeRun(20, 299_600, prep, RATE_CARD.tiers)).toEqual({ credits: 640, tier: 1 });
   });
 
-  it('treats tier thresholds as inclusive', () => {
-    const prep = FLEX_2026_06.usageTypes.prep!.production;
+  it('treats tier thresholds as inclusive of the upper limit, as the card says', () => {
+    const prep = RATE_CARD.usageTypes.prep!.production;
     // Ends exactly on the 300,000th credit: still base.
-    expect(chargeRun(1, 299_960, prep, FLEX_2026_06.tiers)).toEqual({ credits: 40, tier: 0 });
+    expect(chargeRun(1, 299_960, prep, RATE_CARD.tiers)).toEqual({ credits: 40, tier: 0 });
     // Starts at credit 300,001: tier 2.
-    expect(chargeRun(1, 300_000, prep, FLEX_2026_06.tiers)).toEqual({ credits: 32, tier: 1 });
+    expect(chargeRun(1, 300_000, prep, RATE_CARD.tiers)).toEqual({ credits: 32, tier: 1 });
   });
 });
 
@@ -94,15 +98,12 @@ describe('estimate', () => {
     expect(e.usage[0]!.tier).toEqual([1, 0]);
   });
 
-  it('prices the same activities under Data Services, where batch ingestion bills and Flex has no usage type', () => {
+  it('bills nothing for batch ingestion or Salesforce connectors, which have no Flex usage type', () => {
     const items = [item('ingest_batch', { perRun: 1_000_000, runsPerMonth: 30 }), item('ingest_internal', { perRun: 50_000_000, runsPerMonth: 30 })];
     const flex = estimate(plan(items, { months: 1 }));
-    const ds = estimate(plan(items, { months: 1, cardId: 'data-services-2025-08' }));
     expect(flex.total.pooled).toBe(0);
     expect(flex.items.every((i) => i.free && !i.unpriced)).toBe(true);
     expect(flex.warnings).toEqual([]);
-    expect(ds.total.pooled).toBeCloseTo(30 * 2_000, 6);
-    expect(ds.items[1]!.total).toBe(0);
   });
 
   it('flags activities a card doesn’t price, and counts them as 0', () => {
@@ -123,15 +124,15 @@ describe('estimate', () => {
     expect(Math.abs(e.items[0]!.total - e.items[1]!.total)).toBeLessThan(5_000);
   });
 
-  it('keeps totals exact on a flat card however finely runs are grouped', () => {
+  it('keeps totals exact however finely runs are grouped, on a flat multiplier', () => {
     const every15 = FREQUENCIES.find((f) => f.id === '15m')!.runs;
-    const e = estimate(plan([item('queries', { perRun: 2_000_000, runsPerMonth: every15 })], { cardId: 'data-services-2025-08', months: 3 }));
+    const e = estimate(plan([item('queries', { perRun: 2_000_000, runsPerMonth: every15 })], { overrides: { queries: 2 }, months: 3 }));
     expect(e.total.pooled).toBeCloseTo(3 * every15 * 2 * 2, 6);
   });
 
   it('applies annual growth to recurring volume only, and honours start and end months', () => {
     const p = plan([item('ci_batch', { perRun: 10e6, runsPerMonth: 1, initial: 5e6, startMonth: 2, endMonth: 13 })], {
-      cardId: 'data-services-2025-08', months: 14, growthPct: 12,
+      overrides: { prep: 15 }, months: 14, growthPct: 12,
     });
     const m = estimate(p).items[0]!.monthly;
     expect(m[0]).toBe(0);
@@ -140,13 +141,11 @@ describe('estimate', () => {
     expect(m[13]).toBe(0);
   });
 
-  it('keeps Data Services sandbox credits off the entitlement, and pools them under Flex', () => {
+  it('counts sandbox at its flat multiplier against the same entitlement', () => {
     const items = [item('segmentation', { perRun: 1e6, runsPerMonth: 1, env: 'sandbox' })];
-    const ds = estimate(plan(items, { cardId: 'data-services-2025-08', months: 1 }));
-    expect(ds.total).toEqual({ production: 0, sandbox: 16, pooled: 0 });
-    expect(ds.warnings.join(' ')).toMatch(/separate Data Services credits for Sandbox/);
-    const flex = estimate(plan(items, { months: 1 }));
-    expect(flex.total).toEqual({ production: 0, sandbox: 40, pooled: 40 });
+    const e = estimate(plan(items, { months: 1 }));
+    expect(e.total).toEqual({ production: 0, sandbox: 40, pooled: 40 });
+    expect(e.warnings).toEqual([]);
   });
 
   it('uses an override as a flat multiplier for that usage type', () => {
@@ -243,12 +242,11 @@ describe('export', () => {
   const at = new Date('2026-10-07T12:00:00Z');
   const tables = planTables(p, at);
 
-  it('records the card, its source, the assumptions and the other card’s total', () => {
+  it('records the rate card, the assumptions and nothing about other credit types', () => {
     const [about, items] = tables;
     const v = (k: string) => about!.rows.find((r) => r[0] === k)?.[1];
-    expect(v('Rate card')).toBe('Flex Credits (June 2026), as of 2026-06-17');
-    expect(String(v('Rate card source'))).toMatch(/Flex-Credits-Rate-Card-06\.17\.2026\.pdf$/);
-    expect(v('Same plan under Data Services credits (August 2025)')).toBe(roundCredits(estimate({ ...p, cardId: 'data-services-2025-08' }).total.pooled));
+    expect(v('Rate card')).toBe('Salesforce Flex Credits Rate Card, updated August 31, 2026 (Data 360)');
+    expect(about!.rows.some((r) => /Same plan under|Data Services/.test(String(r[0])))).toBe(false);
     expect(about!.rows.some((r) => r[0] === 'Warning' && /inferences/i.test(String(r[1])))).toBe(true);
     expect(items!.rows[0]).toContain('5% change a day');
     expect(items!.rows[2]![3]).toMatch(/^Not priced/);
@@ -259,7 +257,8 @@ describe('export', () => {
     expect(md).toMatch(/^# Credit estimate: Test/);
     expect(md).toContain('Web \\| SDK');
     expect(md).toContain('## By month');
-    expect(md).toContain('## Rate card: Flex Credits (June 2026)');
+    expect(md).toContain('## Rate card: Flex Credits Rate Card, 2026-08-31');
+    expect(md).not.toMatch(/order form|Data Services/i);
     expect(md).toContain('Nov 2026');
   });
 });

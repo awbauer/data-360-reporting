@@ -26,16 +26,14 @@ test('credit plans: estimate without an org, persist, export, then seed from the
   await expect(ir.locator('td').nth(4)).toContainText('480,000');
   await expect(page.locator('.tile', { hasText: 'Flex Credits over 12 months' }).locator('.num')).toHaveText('480,000');
 
-  // Batch ingestion has no Flex usage type; under Data Services it bills at 2,000/M.
+  // Batch ingestion has no Flex usage type, so it isn't billed. Only Flex Credits are estimated.
   await page.getByLabel('Add an activity').selectOption('ingest_batch');
   const ingest = row(page, 'Batch ingestion from external sources');
   await ingest.getByLabel('rows per run').fill('1m');
   await ingest.getByLabel('rows per run').press('Enter');
   await expect(ingest.getByText('not billed')).toBeVisible();
-  await page.getByLabel('Rate card').selectOption('data-services-2025-08');
-  await expect(ir.locator('td').nth(4)).toContainText('800,000');
-  await expect(ingest.locator('td').nth(4)).toContainText('24,000'); // monthly × 12 × 2,000
-  await page.getByLabel('Rate card').selectOption('flex-2026-06');
+  await expect(page.getByLabel('Rate card')).toHaveCount(0);
+  await expect(page.getByText(/Data Services|order form/i)).toHaveCount(0);
 
   // The entitlement runway.
   await page.getByLabel('Credits in the contract').fill('400k');
@@ -59,7 +57,8 @@ test('credit plans: estimate without an org, persist, export, then seed from the
   await page.getByRole('button', { name: 'Markdown' }).click();
   const md = readFileSync(await (await download).path(), 'utf8');
   expect(md).toContain('# Credit estimate: Acme year 1');
-  expect(md).toContain('Flex Credits (June 2026), as of 2026-06-17');
+  expect(md).toContain('Salesforce Flex Credits Rate Card, updated August 31, 2026');
+  expect(md).not.toMatch(/Data Services|order form/i);
   expect(md).toContain('480000');
 
   // Connected: the plan is under Credits in the workbench, and activities can come from the org.

@@ -63,7 +63,6 @@ describe('credit plans API', () => {
 
   it('validates plans and drops unknown keys', async () => {
     for (const bad of [
-      plan({ cardId: 'nope' as CreditPlan['cardId'] }),
       plan({ months: 0 }),
       plan({ months: 61 }),
       plan({ name: '  ' }),

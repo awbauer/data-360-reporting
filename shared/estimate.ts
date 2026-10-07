@@ -58,7 +58,7 @@ export const profileRows = (objectRows: number, batches: number): number => obje
 
 /**
  * Credits per million rows scanned by a query: the base-tier Flex multiplier for Data 360 Queries.
- * Kept as a literal so the rate cards stay out of the main bundle; tests/estimate.test.ts checks it
+ * Kept as a literal so the rate card stays out of the main bundle; tests/estimate.test.ts checks it
  * against them. Flex tiers lower this rate as a month's usage grows, so it is an upper bound.
  */
 export const QUERY_CREDITS_PER_MILLION = 3;

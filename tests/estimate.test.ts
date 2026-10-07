@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FLEX_2026_06 } from '../shared/credits';
+import { RATE_CARD } from '../shared/credits';
 import { QUERY_CREDITS_PER_MILLION, creditsFor, estimateScan, fmtEstCredits, fmtRows, profileRows } from '../shared/estimate';
 import { describePublishInterval } from '../shared/schedule';
 import type { ObjectMeta } from '../shared/types';
@@ -8,7 +8,7 @@ const obj = (name: string, label = name): ObjectMeta => ({ name, label, kind: 'd
 
 describe('query credits', () => {
   it('use the base-tier Flex rate for Data 360 Queries', () => {
-    expect(QUERY_CREDITS_PER_MILLION).toBe(FLEX_2026_06.usageTypes.queries!.production[0]);
+    expect(QUERY_CREDITS_PER_MILLION).toBe(RATE_CARD.usageTypes.queries!.production[0]);
   });
 
   it('turn rows into credits and format them', () => {
