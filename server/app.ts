@@ -410,14 +410,14 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
     return v;
   };
 
-  // Lineage: which DLOs feed a DMO, or which DMOs a DLO feeds. Metadata only, no query credits.
+  // Lineage: the DLOs that feed one DMO (optionally narrowed to one DLO). The upstream API has no
+  // lookup by DLO alone, so the browser walks the DMOs for that direction. Metadata only, no query credits.
   app.get('/api/mappings', async (c) => {
-    const kind = z.enum(['dmo', 'dlo']).parse(c.req.query('kind'));
-    return c.json(await c.get('client')!.getMappings(dataspaceOf(c), objectNameOf(c.req.query('object')), kind));
+    const dlo = c.req.query('dlo');
+    return c.json(await c.get('client')!.getMappings(dataspaceOf(c), objectNameOf(c.req.query('dmo')), dlo ? objectNameOf(dlo) : undefined));
   });
 
-  app.get('/api/insights/:name', async (c) =>
-    c.json(await c.get('client')!.getCalculatedInsight(dataspaceOf(c), objectNameOf(c.req.param('name')))));
+  app.get('/api/insights/:name', async (c) => c.json(await c.get('client')!.getCalculatedInsight(objectNameOf(c.req.param('name')))));
 
   app.post('/api/query', async (c) => {
     const body = queryBody.parse(await c.req.json());

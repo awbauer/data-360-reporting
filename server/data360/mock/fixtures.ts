@@ -141,15 +141,14 @@ const identityLink = {
   name: 'IndividualIdentityLink__dlm',
   displayName: 'Individual Identity Link',
   category: 'Profile',
+  // Only the columns the Connect API spec's own examples show on this object.
   fields: [
-    f('ssot__Id__c', 'Link Id', 'STRING'),
     f('SourceRecordId__c', 'Source Record Id', 'STRING'),
+    f('KQ_SourceRecordId__c', 'Key Qualifier Source Record Id', 'STRING'),
     f('UnifiedRecordId__c', 'Unified Record Id', 'STRING'),
-    f('ssot__DataSourceId__c', 'Data Source', 'STRING'),
-    f('ssot__DataSourceObjectId__c', 'Data Source Object', 'STRING'),
   ],
   indexes: [],
-  primaryKeys: [{ name: 'ssot__Id__c', displayName: 'Link Id', indexOrder: '1' }],
+  primaryKeys: [],
   relationships: [
     rel('ssot__Individual__dlm', 'IndividualIdentityLink__dlm', 'ssot__Id__c', 'SourceRecordId__c', 'ONETOONE'),
     rel('IndividualIdentityLink__dlm', 'UnifiedIndividual__dlm', 'UnifiedRecordId__c', 'ssot__Id__c', 'NTOONE'),
@@ -179,12 +178,14 @@ export const MAPPINGS = {
   objectSourceTargetMaps: [
     {
       developerName: 'Contact_Home_Individual_Map',
+      status: 'ACTIVE',
       sourceEntityDeveloperName: 'Contact_Home__dll',
       targetEntityDeveloperName: 'ssot__Individual__dlm',
       fieldMappings: [{ developerName: 'm1', sourceFieldDeveloperName: 'Id__c', targetFieldDeveloperName: 'ssot__Id__c' }],
     },
     {
       developerName: 'Contact_Home_Email_Map',
+      status: 'ACTIVE',
       sourceEntityDeveloperName: 'Contact_Home__dll',
       targetEntityDeveloperName: 'ssot__ContactPointEmail__dlm',
       fieldMappings: [
@@ -196,25 +197,37 @@ export const MAPPINGS = {
   ],
 };
 
-/** `GET /ssot/calculated-insights/{apiName}`. */
+/** `GET /ssot/calculated-insights/{apiName}`, in the shape of the spec's own example. */
 export const INSIGHTS: Record<string, unknown> = {
   Avg_Spends__cio: {
     apiName: 'Avg_Spends__cio',
-    displayName: 'Avg Spends',
+    calculatedInsightStatus: 'ACTIVE',
+    creationType: 'Custom',
+    dataSpace: 'default',
+    definitionStatus: 'IN_USE',
+    definitionType: 'CALCULATED_METRIC',
     description: 'Average order value per individual over the last 12 months.',
+    displayName: 'Avg Spends',
     expression:
       'SELECT AVG(SalesOrder__dlm.grand_total_amount__c) AS Avg_Spend__c, ssot__Individual__dlm.ssot__Id__c AS Id__c, ' +
       'ssot__Individual__dlm.ssot__FirstName__c AS FirstName__c FROM SalesOrder__dlm JOIN ssot__Individual__dlm ' +
       'ON SalesOrder__dlm.ssot__SoldToCustomerId__c = ssot__Individual__dlm.ssot__Id__c GROUP BY Id__c, FirstName__c',
-    calculatedInsightStatus: 'ACTIVE',
-    lastCalcInsightStatus: 'SUCCESS',
-    lastCalcInsightStatusDateTime: '2026-10-06T03:00:00Z',
-    definitionType: 'CALCULATED_METRIC',
-    publishScheduleInterval: 'TWENTY_FOUR',
+    isEnabled: true,
+    lastCalcInsightStatusDateTime: '2026-10-06T03:05:00.000Z',
+    lastCalcInsightStatusErrorCode: null,
+    lastRunDateTime: '2026-10-06T03:00:08.000Z',
+    lastRunStatus: 'SUCCESS',
+    lastRunStatusDateTime: '2026-10-06T03:02:32.000Z',
+    lastRunStatusErrorCode: null,
+    publishScheduleEndDate: null,
+    publishScheduleInterval: 'NOT_SCHEDULED',
+    publishScheduleStartDateTime: null,
     dimensions: [
-      { apiName: 'Id__c', displayName: 'Id', formula: 'ssot__Individual__dlm.ssot__Id__c' },
-      { apiName: 'FirstName__c', displayName: 'First Name', formula: 'ssot__Individual__dlm.ssot__FirstName__c' },
+      { apiName: 'Id__c', creationType: 'Custom', dataType: 'Text', dateGranularity: null, displayName: 'Id', fieldRole: 'DIMENSION', formula: 'ssot__Individual__dlm.ssot__Id__c' },
+      { apiName: 'FirstName__c', creationType: 'Custom', dataType: 'Text', dateGranularity: null, displayName: 'First Name', fieldRole: 'DIMENSION', formula: 'ssot__Individual__dlm.ssot__FirstName__c' },
     ],
-    measures: [{ apiName: 'Avg_Spend__c', displayName: 'Avg Spend', formula: 'AVG(SalesOrder__dlm.grand_total_amount__c)' }],
+    measures: [
+      { apiName: 'Avg_Spend__c', creationType: 'Custom', dataType: 'Number', displayName: 'Avg Spend', fieldAggregationType: 'AGGREGATABLE', fieldRole: 'MEASURE', formula: 'AVG(SalesOrder__dlm.grand_total_amount__c)' },
+    ],
   },
 };

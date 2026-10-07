@@ -92,11 +92,10 @@ function seedIdentity(db: DatabaseSync, people: unknown[][]): void {
   const rnd = mulberry32(7);
   db.exec(`
     CREATE TABLE "UnifiedIndividual__dlm" ("ssot__Id__c" TEXT, "ssot__FirstName__c" TEXT, "ssot__LastName__c" TEXT);
-    CREATE TABLE "IndividualIdentityLink__dlm" ("ssot__Id__c" TEXT, "SourceRecordId__c" TEXT, "UnifiedRecordId__c" TEXT,
-      "ssot__DataSourceId__c" TEXT, "ssot__DataSourceObjectId__c" TEXT);
+    CREATE TABLE "IndividualIdentityLink__dlm" ("SourceRecordId__c" TEXT, "KQ_SourceRecordId__c" TEXT, "UnifiedRecordId__c" TEXT);
   `);
   const unified = db.prepare('INSERT INTO "UnifiedIndividual__dlm" VALUES (?, ?, ?)');
-  const link = db.prepare('INSERT INTO "IndividualIdentityLink__dlm" VALUES (?, ?, ?, ?, ?)');
+  const link = db.prepare('INSERT INTO "IndividualIdentityLink__dlm" VALUES (?, ?, ?)');
   db.exec('BEGIN');
   let i = 0;
   let u = 0;
@@ -106,7 +105,7 @@ function seedIdentity(db: DatabaseSync, people: unknown[][]): void {
     const id = `UNI-${String(u++).padStart(5, '0')}`;
     const head = people[i]!;
     unified.run(id, head[2] as SQLInputValue, head[3] as SQLInputValue);
-    for (const p of people.slice(i, i + size)) link.run(`LNK-${p[0]}`, p[0] as SQLInputValue, id, p[6] as SQLInputValue, 'Individual');
+    for (const p of people.slice(i, i + size)) link.run(p[0] as SQLInputValue, p[1] as SQLInputValue, id);
     i += size;
   }
   db.exec('COMMIT');
@@ -184,7 +183,7 @@ export function createMockClient(): Data360Client {
         {
           apiName: 'Lapsed_VIPs', label: 'Lapsed VIPs', status: 'ACTIVE', publishStatus: 'PUBLISH_SUCCESS', lastMemberCount: 312,
           lastPublished: '2026-10-05T12:00:00Z', description: 'High earners with no email engagement in 90 days.', segmentOn: 'UnifiedIndividual__dlm',
-          segmentType: 'UI',
+          segmentType: 'UI', publishInterval: 'DAILY', nextPublish: '2026-10-08T06:00:00Z',
           includeCriteria: JSON.stringify({ filters: [{ object: 'ssot__Individual__dlm', field: 'ssot__YearlyIncome__c', operator: 'greaterThan', value: '100000' }] }),
           excludeCriteria: JSON.stringify({ filters: [{ object: 'ssot__EmailEngagement__dlm', field: 'ssot__EngagementDateTime__c', operator: 'lastNDays', value: '90' }] }),
         },
@@ -198,13 +197,18 @@ export function createMockClient(): Data360Client {
       };
     },
 
-    async getMappings(_dataspace, object, kind) {
-      const all = normalizeMappings(MAPPINGS);
-      const mine = all.mappings.filter((m) => (kind === 'dmo' ? m.target === object : m.source === object));
-      return { mappings: mine, raw: { objectSourceTargetMaps: MAPPINGS.objectSourceTargetMaps.filter((m) => (kind === 'dmo' ? m.targetEntityDeveloperName : m.sourceEntityDeveloperName) === object) } };
+    async getMappings(_dataspace, dmo, dlo) {
+      // Like the real API: the DMO is required, the DLO only narrows the result.
+      if (!dmo) throw new UpstreamError(400, 'Required query parameter dmoDeveloperName is missing', 'REQUIRED_QUERY_PARAMETER_MISSING');
+      const raw = {
+        objectSourceTargetMaps: MAPPINGS.objectSourceTargetMaps.filter(
+          (m) => m.targetEntityDeveloperName === dmo && (!dlo || m.sourceEntityDeveloperName === dlo),
+        ),
+      };
+      return normalizeMappings(raw);
     },
 
-    async getCalculatedInsight(_dataspace, name) {
+    async getCalculatedInsight(name) {
       const raw = INSIGHTS[name];
       if (!raw) throw new UpstreamError(404, `Calculated insight ${name} not found`, 'NOT_FOUND');
       return normalizeInsight(raw, name);
