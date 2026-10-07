@@ -65,6 +65,9 @@ test('user-supplied consumer key and secret: saved encrypted to the account, nev
   await page.goto(LIVE);
   await saved.getByText('New connection…').click();
   await expect(page.getByText('Recommended: PKCE, no secret.')).toBeVisible();
+  await page.waitForTimeout(300); // it must stay on "New connection", not snap back to the saved one
+  await expect(saved.getByRole('radio', { name: 'New connection…' })).toBeChecked();
+  await expect(page.getByLabel('Consumer key')).toBeVisible();
   await saved.getByText('Acme sandbox').click();
   await page.getByRole('button', { name: 'Delete “Acme sandbox”' }).click();
   await expect(page.getByLabel('Consumer key')).toBeVisible();
@@ -72,7 +75,8 @@ test('user-supplied consumer key and secret: saved encrypted to the account, nev
 });
 
 test('credentials saved by an older build in localStorage are removed', async ({ page, context }) => {
-  await liveSignIn(context, LIVE, 'consultant@example.com');
+  // Its own user, so nothing saved by the test above can change what this page shows.
+  await liveSignIn(context, LIVE, 'returning@example.com');
   await page.goto(LIVE);
   await page.evaluate(() => localStorage.setItem('d360:creds', JSON.stringify({ clientId: 'OLDKEY1234567890', saved: 'AAAA' })));
   await page.reload();

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, type SessionInfo } from '../api';
 import { UserMenu } from '../components/UserMenu';
 import { useUrlError } from './SignIn';
@@ -19,11 +19,16 @@ export function Connect({ session }: { session: SessionInfo }) {
   const qc = useQueryClient();
   const savedList = useQuery({ queryKey: ['credentials'], queryFn: api.savedCredentials, enabled: !session.mock });
   const list = savedList.data ?? [];
-  // '' = type new ones (or use the shared app); otherwise the id of a saved entry.
+  // '' = a new connection (or the shared app); otherwise the id of a saved one.
   const [savedId, setSavedId] = useState('');
+  // Preselect the most recently used connection once, when the list first arrives. Not on every
+  // change, or choosing "New connection" would snap straight back.
+  const preselected = useRef(false);
   useEffect(() => {
-    if (list.length && !savedId) setSavedId(list[0]!.id);
-  }, [list, savedId]);
+    if (preselected.current || !savedList.isSuccess) return;
+    preselected.current = true;
+    if (list.length) setSavedId(list[0]!.id);
+  }, [savedList.isSuccess, list]);
   const saved = list.find((c) => c.id === savedId) ?? null;
   const remove = useMutation({
     mutationFn: api.deleteCredential,
