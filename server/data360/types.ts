@@ -1,4 +1,4 @@
-import type { CellValue, DataSpace, Extras, InsightDefinition, MappingResult, ObjectMeta, QueryChunk, QueryColumn, QueryResponse } from '../../shared/types';
+import type { CellValue, DataSpace, Extras, IdentityRuleset, InsightDefinition, MappingResult, ObjectMeta, QueryChunk, QueryColumn, QueryResponse } from '../../shared/types';
 import type { SqlParameter } from '../../shared/sql';
 
 export interface SubmitQueryInput {
@@ -36,6 +36,8 @@ export interface Data360Client {
    * it. There is no way to ask "which DMOs does this DLO feed" in one call.
    */
   getMappings(dataspace: string, dmo: string, dlo?: string): Promise<MappingResult>;
+  /** Identity-resolution rulesets with their profile counts. The endpoint has no data space parameter. */
+  getIdentityResolutions(): Promise<IdentityRuleset[]>;
   /** The single-insight endpoint takes no data space parameter. */
   getCalculatedInsight(name: string): Promise<InsightDefinition>;
   submitQuery(input: SubmitQueryInput): Promise<QueryResponse>;

@@ -157,6 +157,18 @@ Sign-ins are recorded too (`login_event`): successes, and attempts refused by th
 
 Data 360 bills queries as consumption credits. The app never scans data on its own: the Overview uses metadata only, and row counts, profiling and top-values run only when you click, after a confirmation that states how many queries will run. Results are cached in your browser with a timestamp. Counts and profiles are approximate by design (`APPROX_COUNT_DISTINCT`). Running a query with no `LIMIT` asks first (and can add one for you); the guard is a text heuristic, so it can miss a `LIMIT` inside a subquery or warn on an unusual query. It can be silenced for the browser session.
 
+### Credit estimates and planning
+
+**Salesforce's API reports no credit consumption at all.** A query's status carries only a result row count; there is no usage endpoint in the Connect API. So nothing in the workbench is a measurement. Every credit figure is an estimate: rows (from counts you already have) times a rate card.
+
+- **Query editor, Overview, Explorer:** the editor shows an estimate chip ("est. ≈ 0.4 credits") from the objects the SQL names and the row counts cached in your browser. It assumes every named object is read once in full, so it is an upper bound, and it says so when a count is missing or a `LIMIT` might stop the read early. Confirmation dialogs state the same estimate before a count or profile runs.
+- **History, Audit, Admin → Usage:** each run records the estimate it was shown (`est_rows`, `est_complete` on `query_log`), so admins can total estimated rows and credits per user and org. It counts only queries run through this workbench, not what else consumes credits in the org.
+- **Plan:** a planning sheet for sizing an engagement. Lines are usage types (queries, batch and streaming ingestion and transforms, identity unification, segmentation, activation) with rows per run and runs per month, plus monthly growth and a horizon up to 36 months. **Fill from this org** reads data streams (last run and refresh frequency), identity resolution rulesets and segments (publish interval); everything is editable and nothing is scheduled by us. It also works without connecting an org (link on the Connect screen) for pre-sales sizing. Plans and rates are saved to your account and export to Excel and Markdown with their assumptions.
+
+**The rates are unverified defaults.** They were taken from secondary summaries of Salesforce's rate cards (the originals could not be read when they were written, and the summaries disagree in places), so each one is editable under Plan → Rate card, and the plan and its exports say "UNVERIFIED" until someone ticks that they checked them against the customer's contract. Volume tiers, sandbox discounts and storage are not modelled. Treat an export as a sizing aid, not a quote.
+
+What the defaults imply (and why the planner matters more than query warnings): queries are the cheapest line by far, about 3 credits per million rows read, so 100 million rows is around 300 credits. Identity unification and ingestion are orders of magnitude more per row, and they recur on a schedule.
+
 ## Query library
 
 Saved queries are `.sql` files under [`queries/`](queries/README.md) with a small YAML header. To add one, use **Propose to library** in the Query editor (it opens a pre-filled GitHub "new file" page) or open a pull request yourself. CI runs `npm run validate:library` on every change, and the build fails on an invalid file.

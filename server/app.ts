@@ -43,7 +43,7 @@ const TX_TTL = 600;
 const SAVED_TTL = 60 * 60 * 24 * 365 * 10;
 const MAX_SAVED_CREDENTIALS = 25;
 const MAX_STATE_BYTES = 512 * 1024;
-const STATE_KEYS = new Set(['tabs']);
+const STATE_KEYS = new Set(['tabs', 'rates', 'plans']);
 const DATASPACE_RE = /^[A-Za-z0-9_]{1,80}$/;
 const OBJECT_NAME_RE = /^[A-Za-z0-9_]{1,255}$/;
 const QUERY_ID_RE = /^[A-Za-z0-9%._~=+-]{1,512}$/;
@@ -83,6 +83,9 @@ const queryBody = z.object({
   paramDefs: z.array(paramDef).max(100).default([]),
   params: z.record(z.string()).default({}),
   source: z.enum(['editor', 'explorer', 'overview', 'library']).default('editor'),
+  /** The browser's estimate of rows read, from cached row counts. Recorded, never trusted for anything. */
+  estRows: z.number().int().min(0).max(1e13).nullable().optional(),
+  estComplete: z.boolean().optional(),
 });
 
 export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, store }: AppDeps): Hono<Env> {
@@ -335,10 +338,10 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
       limit: intOf(q.limit, 200, 1, q.format === 'csv' ? 50_000 : 500),
     });
     if (q.format !== 'csv') return c.json(rows);
-    const header = ['started_at', 'user_email', 'instance_host', 'sf_org_id', 'sf_user_id', 'dataspace', 'source', 'status', 'row_count', 'duration_ms', 'error', 'sql', 'params'];
+    const header = ['started_at', 'user_email', 'instance_host', 'sf_org_id', 'sf_user_id', 'dataspace', 'source', 'status', 'row_count', 'duration_ms', 'est_rows_read', 'est_complete', 'error', 'sql', 'params'];
     const lines = rows.map((r) => toCsvLine([
       new Date(r.startedAt).toISOString(), r.userEmail, r.instanceHost, r.sfOrgId, r.sfUserId, r.dataspace, r.source, r.status,
-      r.rowCount, r.finishedAt ? r.finishedAt - r.startedAt : null, r.error, r.sql, JSON.stringify(r.params),
+      r.rowCount, r.finishedAt ? r.finishedAt - r.startedAt : null, r.estRows, r.estComplete === null ? null : r.estComplete ? 'yes' : 'no', r.error, r.sql, JSON.stringify(r.params),
     ]));
     return new Response([toCsvLine(header), ...lines].join('\n') + '\n', {
       headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="query-audit.csv"', 'cache-control': 'no-store' },
@@ -417,6 +420,12 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
     return c.json(await c.get('client')!.getMappings(dataspaceOf(c), objectNameOf(c.req.query('dmo')), dlo ? objectNameOf(dlo) : undefined));
   });
 
+  app.get('/api/identity', async (c) => {
+    const ds = dataspaceOf(c);
+    const all = await c.get('client')!.getIdentityResolutions();
+    return c.json(all.filter((r) => !r.dataSpace || r.dataSpace === ds));
+  });
+
   app.get('/api/insights/:name', async (c) => c.json(await c.get('client')!.getCalculatedInsight(objectNameOf(c.req.param('name')))));
 
   app.post('/api/query', async (c) => {
@@ -444,6 +453,8 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
       error: null,
       startedAt: started,
       finishedAt: null,
+      estRows: body.estRows ?? null,
+      estComplete: body.estRows === undefined || body.estRows === null ? null : (body.estComplete ?? false),
     };
     await store.logRun(run);
     let res;
@@ -579,6 +590,8 @@ export interface HistoryItem {
   rows: number | null;
   elapsedMs: number | null;
   error: string | null;
+  estRows: number | null;
+  estComplete: boolean | null;
 }
 
 function toHistoryItem(r: RunRecord): HistoryItem {
@@ -594,6 +607,8 @@ function toHistoryItem(r: RunRecord): HistoryItem {
     rows: r.rowCount,
     elapsedMs: r.finishedAt ? r.finishedAt - r.startedAt : null,
     error: r.error,
+    estRows: r.estRows,
+    estComplete: r.estComplete,
   };
 }
 

@@ -1,4 +1,4 @@
-import type { DataSpace, Extras, InsightDefinition, MappingResult, ObjectMeta, ParamDef, QueryChunk, QueryColumn, QueryResponse } from '@shared/types';
+import type { DataSpace, Extras, IdentityRuleset, InsightDefinition, MappingResult, ObjectMeta, ParamDef, QueryChunk, QueryColumn, QueryResponse } from '@shared/types';
 
 export class ApiError extends Error {
   constructor(
@@ -98,6 +98,19 @@ export interface HistoryItem {
   rows: number | null;
   elapsedMs: number | null;
   error: string | null;
+  estRows: number | null;
+  estComplete: boolean | null;
+}
+
+export interface UsageRow {
+  userEmail: string;
+  instanceHost: string;
+  runs: number;
+  estimatedRuns: number;
+  partialRuns: number;
+  estRows: number;
+  firstAt: number;
+  lastAt: number;
 }
 
 export interface AdminBlock {
@@ -171,6 +184,8 @@ export interface AuditEntry {
   error: string | null;
   startedAt: number;
   finishedAt: number | null;
+  estRows: number | null;
+  estComplete: boolean | null;
 }
 
 export interface QueryStatus {
@@ -187,9 +202,15 @@ export interface RunInput {
   params?: Record<string, string>;
   /** Where the run came from, for the audit log; History shows only `editor` runs. */
   source?: 'editor' | 'explorer' | 'overview';
+  /** Our estimate of rows the run reads, from cached counts (see shared/estimate.ts). */
+  estRows?: number;
+  /** False when `estRows` is only a lower bound. */
+  estComplete?: boolean;
 }
 
 const enc = encodeURIComponent;
+
+export type StateKey = 'tabs' | 'rates' | 'plans';
 
 /** App sign-in, served by Better Auth under /api/auth. */
 export const appAuth = {
@@ -240,9 +261,11 @@ export const api = {
       return request<LoginEvent[]>(`/api/admin/logins?${q}`);
     },
     actions: () => request<AdminAction[]>('/api/admin/actions'),
+    usage: (days: number) => request<{ days: number; rows: UsageRow[] }>(`/api/admin/usage?days=${days}`),
   },
-  getState: <T>(key: 'tabs') => request<{ value: T; updatedAt: number } | null>(`/api/state/${key}`),
-  putState: (key: 'tabs', value: unknown) => request<{ ok: true }>(`/api/state/${key}`, { method: 'PUT', json: { value } }),
+  getState: <T>(key: StateKey) => request<{ value: T; updatedAt: number } | null>(`/api/state/${key}`),
+  putState: (key: StateKey, value: unknown) => request<{ ok: true }>(`/api/state/${key}`, { method: 'PUT', json: { value } }),
+  identity: (dataspace: string) => request<IdentityRuleset[]>(`/api/identity?dataspace=${enc(dataspace)}`),
   dataspaces: () => request<DataSpace[]>('/api/dataspaces'),
   metadata: (dataspace: string) =>
     request<{ objects: ObjectMeta[]; warnings: string[] }>(`/api/metadata?dataspace=${enc(dataspace)}`),

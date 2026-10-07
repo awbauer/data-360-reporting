@@ -144,6 +144,9 @@ await step(`Data streams and segments (${dataspace})`, async () => {
   const streams = x.dataStreams?.items ?? [];
   const segments = x.segments?.items ?? [];
   console.log(`   streams naming their DLO: ${streams.filter((s) => s.dataLakeObject).length}/${streams.length}`);
+  // The credit planner reads these; if a field is absent, its line falls back to a total or to zero.
+  console.log(`   planner inputs on streams: lastProcessedRecords=${streams.filter((s) => s.lastProcessedRecords != null).length} lastAddedRecords=${streams.filter((s) => s.lastAddedRecords != null).length} refreshFrequency=${streams.filter((s) => s.refreshFrequency).length}/${streams.length}`);
+  console.log(`   planner inputs on segments: publishInterval=${segments.filter((s) => s.publishInterval).length}/${segments.length}`);
   console.log(`   segments with include criteria: ${segments.filter((s) => s.includeCriteria).length}/${segments.length}; with exclude: ${segments.filter((s) => s.excludeCriteria).length}`);
   const sample = segments.find((s) => s.includeCriteria)?.includeCriteria;
   if (sample) console.log(`   include criteria is ${(() => { try { return `JSON ${shapeDeep(JSON.parse(sample))}`; } catch { return 'not JSON'; } })()}`);

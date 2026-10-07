@@ -3,6 +3,7 @@ import { refreshSession, type FetchLike, type Session } from '../oauth';
 import type { ObjectKind } from '../../shared/types';
 import {
   normalizeDataSpaces,
+  normalizeIdentityResolutions,
   normalizeInsight,
   normalizeMappings,
   normalizeMetadata,
@@ -146,6 +147,10 @@ export function createConnectClient(
       return normalizeMappings(
         await call('GET', `/data-model-object-mappings${qs({ dataspace, dmoDeveloperName: dmo, dloDeveloperName: dlo })}`),
       );
+    },
+
+    async getIdentityResolutions() {
+      return normalizeIdentityResolutions(await call('GET', '/identity-resolutions'));
     },
 
     async getCalculatedInsight(name) {

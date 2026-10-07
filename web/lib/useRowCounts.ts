@@ -24,7 +24,12 @@ export function useRowCounts(host: string, dataspace: string, objects: ObjectMet
 
   const countOne = useCallback(
     async (name: string, signal?: AbortSignal) => {
-      const res = await runToCompletion({ sql: buildRowCountSql({ name }), dataspace, source: 'overview' }, { signal, maxRows: 1 });
+      // A recount reads about as many rows as it found last time; a first count has nothing to go on.
+      const before = countCache.get(host, dataspace, name)?.rows;
+      const res = await runToCompletion(
+        { sql: buildRowCountSql({ name }), dataspace, source: 'overview', ...(before !== undefined ? { estRows: before, estComplete: true } : {}) },
+        { signal, maxRows: 1 },
+      );
       const rows = Number(res.rows[0]?.[0] ?? 0);
       const entry = { rows, at: new Date().toISOString() };
       countCache.set(host, dataspace, name, entry);

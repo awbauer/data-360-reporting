@@ -11,6 +11,10 @@ import { RelationshipMap } from '../components/RelationshipMap';
 import { useWorkbench } from '../context';
 import { fmtAgo, fmtNum, fmtPct } from '../lib/format';
 import { countCache, profileCache } from '../lib/storage';
+import { creditsFor, fmtCredits, fmtMoney, fmtRows } from '@shared/credits';
+import { profileRows } from '@shared/estimate';
+import { exampleCost } from '../lib/estimateText';
+import { useRates } from '../lib/useRates';
 import { isLinearType } from '@shared/histogram';
 
 const KIND_LABEL: Record<ObjectKind, string> = { dmo: 'DMO', dlo: 'DLO', ci: 'CI' };
@@ -99,13 +103,17 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
   const [open, setOpen] = useState<Set<string>>(() => new Set());
 
   const batches = useMemo(() => buildProfileBatches(obj), [obj]);
+  const { rates, price, currency } = useRates();
   const openInEditor = (sql: string, autorun: boolean) => nav('/query', { state: { sql, dataspace: ds, autorun } });
 
   const countRows = async () => {
     setBusy('Counting rows…');
     setError(null);
     try {
-      const r = await runToCompletion({ sql: buildRowCountSql(obj), dataspace: ds }, { maxRows: 1 });
+      const r = await runToCompletion(
+        { sql: buildRowCountSql(obj), dataspace: ds, ...(count ? { estRows: count.rows, estComplete: true } : {}) },
+        { maxRows: 1 },
+      );
       const entry = { rows: Number(r.rows[0]?.[0] ?? 0), at: new Date().toISOString() };
       countCache.set(host, ds, obj.name, entry);
       setCount(entry);
@@ -123,7 +131,7 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
       const rows: CellValue[][] = [];
       for (let i = 0; i < batches.length; i++) {
         setBusy(`Profiling… ${i + 1}/${batches.length}`);
-        const r = await runToCompletion({ sql: batches[i]!.sql, dataspace: ds }, { maxRows: 1 });
+        const r = await runToCompletion({ sql: batches[i]!.sql, dataspace: ds, ...(count ? { estRows: count.rows, estComplete: true } : {}) }, { maxRows: 1 });
         if (!r.rows[0]) throw new Error('Profile query returned no rows');
         rows.push(r.rows[0]);
       }
@@ -283,8 +291,13 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
       >
         <p style={{ margin: 0 }}>
           Computes row count, non-null count, approximate distinct count and min/max for <b>{obj.fields.length}</b> fields using{' '}
-          <b>{batches.length}</b> full-scan {batches.length === 1 ? 'query' : 'queries'}. Data 360 bills queries as consumption credits.
-          Results are cached in this browser.
+          <b>{batches.length}</b> full-scan {batches.length === 1 ? 'query' : 'queries'}. Results are cached in this browser.
+        </p>
+        <p className="small muted" style={{ margin: 0 }}>
+          {count
+            ? `${fmtRows(count.rows)} rows × ${batches.length} ${batches.length === 1 ? 'query' : 'queries'}: roughly ${fmtCredits(creditsFor(profileRows(count.rows, batches.length), rates.query))} credits${price ? ` (${fmtMoney(creditsFor(profileRows(count.rows, batches.length), rates.query) * price, currency)})` : ''}.`
+            : `${exampleCost({ rate: rates.query, price, currency })}, once per query. This object hasn't been counted, so its size is unknown.`}{' '}
+          An estimate: Salesforce reports no credit usage.
         </p>
       </ConfirmDialog>
     </div>

@@ -2,6 +2,7 @@ import type {
   CellValue,
   DataSpace,
   FieldMeta,
+  IdentityRuleset,
   InsightDefinition,
   InsightField,
   MappingResult,
@@ -148,6 +149,10 @@ export function normalizeStreams(body: unknown): { items: StreamInfo[]; totalSiz
         ...(optStr(o.lastRunStatus) ? { lastRunStatus: str(o.lastRunStatus) } : {}),
         ...(optStr(o.lastRefreshDate) ? { lastRefreshDate: str(o.lastRefreshDate) } : {}),
         ...(optNum(o.totalRecords) !== undefined ? { totalRecords: optNum(o.totalRecords) } : {}),
+        ...(optNum(o.lastProcessedRecords) !== undefined ? { lastProcessedRecords: optNum(o.lastProcessedRecords) } : {}),
+        ...(optNum(o.lastAddedRecords) !== undefined ? { lastAddedRecords: optNum(o.lastAddedRecords) } : {}),
+        ...(optStr(obj(o.refreshConfig).refreshMode) ? { refreshMode: str(obj(o.refreshConfig).refreshMode) } : {}),
+        ...(optStr(obj(o.refreshConfig).frequency) ? { refreshFrequency: str(obj(o.refreshConfig).frequency) } : {}),
         ...(streamDlo(o) ? { dataLakeObject: streamDlo(o) } : {}),
       };
     }),
@@ -261,6 +266,40 @@ export function normalizeSegments(body: unknown): SegmentInfo[] {
       ...(optStr(o.segmentType) ? { segmentType: str(o.segmentType) } : {}),
       ...(asText(o.includeCriteria) ? { includeCriteria: asText(o.includeCriteria)! } : {}),
       ...(asText(o.excludeCriteria) ? { excludeCriteria: asText(o.excludeCriteria)! } : {}),
+    };
+  });
+}
+
+/**
+ * `GET /ssot/identity-resolutions` (CdpIdentityResolutionsOutputRepresentation). Counts are given
+ * without running a query, which makes them a free way to see how well resolution is working.
+ */
+export function normalizeIdentityResolutions(body: unknown): IdentityRuleset[] {
+  return arr(obj(body).identityResolutions).map((r): IdentityRuleset => {
+    const o = obj(r);
+    const n = (k: string) => (optNum(o[k]) !== undefined ? { [k]: optNum(o[k]) } : {});
+    return {
+      label: str(o.label, str(o.objectApiName, 'Ruleset')),
+      ...(optStr(o.rulesetStatus) ? { status: str(o.rulesetStatus) } : {}),
+      ...(optStr(o.objectApiName) ? { objectApiName: str(o.objectApiName) } : {}),
+      ...(optStr(o.dataSpaceName) ? { dataSpace: str(o.dataSpaceName) } : {}),
+      ...(typeof o.doesRunAutomatically === 'boolean' ? { runsAutomatically: o.doesRunAutomatically } : {}),
+      ...(optStr(o.lastJobStatus) ? { lastJobStatus: str(o.lastJobStatus) } : {}),
+      ...(optStr(o.lastJobCompleted) ? { lastJobCompleted: str(o.lastJobCompleted) } : {}),
+      ...n('sourceProfiles'),
+      ...n('matchedSourceProfiles'),
+      ...n('totalUnifiedProfiles'),
+      ...n('knownUnifiedProfiles'),
+      ...n('anonymousUnifiedProfiles'),
+      ...n('consolidationRate'),
+      outputs: arr(o.reconciliationRules).map((x) => {
+        const rr = obj(x);
+        return {
+          ...(optStr(rr.entityName) ? { entity: str(rr.entityName) } : {}),
+          ...(optStr(rr.linkDmoName) ? { linkDmo: str(rr.linkDmoName) } : {}),
+          ...(optStr(rr.unifiedDmoName) ? { unifiedDmo: str(rr.unifiedDmoName) } : {}),
+        };
+      }),
     };
   });
 }

@@ -96,5 +96,11 @@ export function registerAdminRoutes<E extends { Variables: { user?: AppUser } }>
     );
   });
 
+  // Estimated rows read by person and org. The page turns rows into credits with the viewer's rates.
+  a.get('/api/admin/usage', async (c) => {
+    const days = intOf(c.req.query('days'), 30, 1, 3650);
+    return c.json({ days, rows: await store.usage(Date.now() - days * 86_400_000) });
+  });
+
   a.get('/api/admin/actions', async (c) => c.json(await store.actions(intOf(c.req.query('limit'), 200, 1, 500))));
 }

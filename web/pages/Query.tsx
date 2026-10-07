@@ -6,6 +6,7 @@ import { analyzeQuery, withLimit } from '@shared/sqlcheck';
 import type { ParamDef, ParamType } from '@shared/types';
 import { api } from '../api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { EstimateChip } from '../components/EstimateChip';
 import { ParamForm } from '../components/ParamForm';
 import { ProposeDialog } from '../components/ProposeDialog';
 import { ResultChart } from '../components/ResultChart';
@@ -13,7 +14,9 @@ import { ResultsGrid } from '../components/ResultsGrid';
 import { SqlEditor } from '../components/SqlEditor';
 import { useWorkbench } from '../context';
 import { fmtAgo, fmtMs, fmtNum } from '../lib/format';
+import { scanLong } from '../lib/estimateText';
 import { formatSql } from '../lib/formatSql';
+import { useScanEstimate } from '../lib/useScanEstimate';
 import { countCache, emptyTab, MAX_TABS, normalizeTabs, skipLimitWarning, tabStore, type TabData, type TabStore } from '../lib/storage';
 import { MAX_IN_MEMORY, useQueryRunner } from '../lib/useQueryRunner';
 
@@ -174,6 +177,7 @@ function QueryTab({ tab, active, autorun, onAutoran, onChange }: TabProps) {
 
   // The server records every run (History reads it back), so nothing to store here.
   const runner = useQueryRunner();
+  const { estimate, view: rateView } = useScanEstimate(sql);
   const { state } = runner;
 
   // Seed a starter query once, when the tab opens empty and metadata arrives. Never again:
@@ -194,9 +198,11 @@ function QueryTab({ tab, active, autorun, onAutoran, onChange }: TabProps) {
     // Only edits should report; `onChange` changes identity on every render of the parent.
   }, [sql, paramDefs, values]);
 
+  // Recorded with the run so the audit can total estimated usage. Only sent when there is something to go on.
+  const est = estimate && (estimate.rows > 0 || estimate.complete) ? { estRows: estimate.rows, estComplete: estimate.complete } : {};
   const execute = useCallback(
-    (text: string) => void runner.start({ sql: text, dataspace: wb.dataspace, paramDefs, params: values }),
-    [runner, wb.dataspace, paramDefs, values],
+    (text: string) => void runner.start({ sql: text, dataspace: wb.dataspace, paramDefs, params: values, ...est }),
+    [runner, wb.dataspace, paramDefs, values, est.estRows, est.estComplete],
   );
 
   /** Run, but first ask if the query would read a whole object. */
@@ -324,6 +330,7 @@ function QueryTab({ tab, active, autorun, onAutoran, onChange }: TabProps) {
           {canMore && <button className="link" onClick={() => void runner.loadMore()} disabled={state.loadingMore}>{state.loadingMore ? 'Loading…' : 'Load more rows'}</button>}
           {state.phase === 'done' && state.rows.length >= MAX_IN_MEMORY && state.rows.length < state.rowCount && <span>Display capped at {fmtNum(MAX_IN_MEMORY)} rows. Export CSV for the rest.</span>}
           <div className="grow" />
+          {estimate && <EstimateChip estimate={estimate} view={rateView} />}
           {hasRows && (
             <span className="seg" role="group" aria-label="Result view">
               <button type="button" aria-pressed={view === 'table'} onClick={() => setView('table')}>Table</button>
@@ -357,8 +364,7 @@ function QueryTab({ tab, active, autorun, onAutoran, onChange }: TabProps) {
       >
         <p style={{ margin: 0 }}>
           This query reads {guard?.selectStar ? 'every column of every row' : 'every matching row'}
-          {guard?.objects.length ? ' in:' : '.'} Only the first {fmtNum(1000)} rows are shown, but the whole scan still runs, and Data 360 bills
-          queries as consumption credits.
+          {guard?.objects.length ? ' in:' : '.'} Only the first {fmtNum(1000)} rows are shown, but the whole scan still runs.
         </p>
         {guard && guard.objects.length > 0 && (
           <ul style={{ margin: 0, paddingLeft: 18 }}>
@@ -370,6 +376,7 @@ function QueryTab({ tab, active, autorun, onAutoran, onChange }: TabProps) {
             ))}
           </ul>
         )}
+        {estimate && <p className="small muted" style={{ margin: 0 }}>{scanLong(estimate, rateView)}</p>}
         <label style={{ flexDirection: 'row', alignItems: 'center', gap: 8, color: 'var(--text)', fontSize: 13 }}>
           <input type="checkbox" checked={skipNext} onChange={(e) => setSkipNext(e.target.checked)} style={{ width: 'auto' }} />
           Don't ask again in this browser session
