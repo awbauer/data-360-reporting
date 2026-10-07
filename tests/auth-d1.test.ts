@@ -233,6 +233,31 @@ describe('configuration and plumbing', () => {
     expect(names).toEqual(['0001_auth.sql', '0002_app.sql', '0003_admin.sql', '0004_saved_login_host.sql', '0005_credit_plans.sql', '0006_query_estimates.sql']);
   });
 
+  it('records a renamed migration without running it again', async () => {
+    // A database migrated by the build that shipped 0005_query_estimates.sql (PR #19), which then
+    // gets 0005_credit_plans.sql and the same estimate columns renumbered as 0006.
+    const all = loadMigrations();
+    const old = { name: '0005_query_estimates.sql', sql: all.find((m) => m.name === '0006_query_estimates.sql')!.sql };
+    const before = [...all.filter((m) => m.name < '0005'), old];
+    const names = (db: { prepare(q: string): { all(): unknown[] } }) => (db.prepare('select name from d1_migrations order by id').all() as { name: string }[]).map((r) => r.name);
+
+    const { DatabaseSync } = (await import('node:module')).createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+    const raw = new DatabaseSync(':memory:');
+    migrateNodeSqlite(raw, before);
+    expect(migrateNodeSqlite(raw, all)).toEqual(['0005_credit_plans.sql']);
+    expect(names(raw)).toContain('0006_query_estimates.sql');
+    expect(migrateNodeSqlite(raw, all)).toEqual([]);
+
+    const viaD1 = new DatabaseSync(':memory:');
+    const d1 = fromNodeSqlite(viaD1 as never);
+    await migrateD1(d1, before);
+    expect(await migrateD1(d1, all)).toEqual(['0005_credit_plans.sql']);
+    expect(names(viaD1 as never)).toContain('0006_query_estimates.sql');
+    expect(await migrateD1(d1, all)).toEqual([]);
+    const cols = (viaD1.prepare('pragma table_info(query_log)').all() as { name: string }[]).map((c) => c.name);
+    expect(cols.filter((c) => c === 'est_rows')).toHaveLength(1);
+  });
+
   it('bundles every migration into the Worker', async () => {
     const src = (await import('node:fs')).readFileSync(new URL('../worker/migrations.ts', import.meta.url), 'utf8');
     for (const m of loadMigrations()) expect(src).toContain(`{ name: '${m.name}', sql:`);

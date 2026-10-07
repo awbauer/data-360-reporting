@@ -11,24 +11,56 @@ export class ApiError extends Error {
   }
 }
 
+/** Status 0: the request never got an answer (offline, DNS, the connection dropped). */
+export const NETWORK_ERROR = 0;
+
+/**
+ * A plain-text or HTML error page (a proxy, a Worker that failed before the app started) carries
+ * no JSON. Use its text when it is a short sentence, otherwise say only what the status means.
+ */
+function messageFromText(status: number, text: string): string {
+  const plain = text.trim();
+  if (plain && plain.length <= 300 && !/^\s*</.test(plain)) return plain;
+  if (status >= 500) return `The server ran into a problem (HTTP ${status}). Try again shortly.`;
+  return `Request failed (HTTP ${status}).`;
+}
+
 async function request<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
   const { json, ...rest } = init;
   const mutating = rest.method && rest.method !== 'GET';
-  const res = await fetch(path, {
-    ...rest,
-    headers: {
-      ...(mutating ? { 'x-d360': '1' } : {}),
-      ...(json !== undefined ? { 'content-type': 'application/json' } : {}),
-      ...(rest.headers as Record<string, string> | undefined),
-    },
-    ...(json !== undefined ? { body: JSON.stringify(json) } : {}),
-  });
-  const text = await res.text();
-  const body = text ? (JSON.parse(text) as unknown) : null;
-  if (!res.ok) {
-    const e = (body ?? {}) as { error?: string; message?: string };
-    throw new ApiError(res.status, e.error ?? 'error', e.message ?? `Request failed (${res.status})`);
+  let res: Response;
+  let text: string;
+  try {
+    res = await fetch(path, {
+      ...rest,
+      headers: {
+        ...(mutating ? { 'x-d360': '1' } : {}),
+        ...(json !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...(rest.headers as Record<string, string> | undefined),
+      },
+      ...(json !== undefined ? { body: JSON.stringify(json) } : {}),
+    });
+    text = await res.text();
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') throw e;
+    throw new ApiError(NETWORK_ERROR, 'network', 'Could not reach the server. Check your connection and try again.');
   }
+  let body: unknown = null;
+  let parsed = !text;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+      parsed = true;
+    } catch {
+      // handled below: an error page, or an HTML page where JSON was expected
+    }
+  }
+  if (!res.ok) {
+    const e = (parsed && body && typeof body === 'object' ? body : {}) as { error?: unknown; message?: unknown };
+    const message = typeof e.message === 'string' && e.message ? e.message : messageFromText(res.status, parsed ? '' : text);
+    throw new ApiError(res.status, typeof e.error === 'string' ? e.error : 'error', message);
+  }
+  if (!parsed) throw new ApiError(res.status, 'bad_response', 'The server sent a response the app could not read. Reload the page and try again.');
   return body as T;
 }
 
