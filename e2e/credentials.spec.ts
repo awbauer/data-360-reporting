@@ -17,7 +17,9 @@ test('user-supplied consumer key and secret: saved encrypted to the account, nev
   const urls: string[] = [];
   page.on('request', (r) => urls.push(r.url()));
   // Don't leave the box: stand in for Salesforce's authorize page.
-  await context.route('https://login.salesforce.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/html', body: 'salesforce' }));
+  for (const host of ['https://login.salesforce.com/**', 'https://test.salesforce.com/**']) {
+    await context.route(host, (route) => route.fulfill({ status: 200, contentType: 'text/html', body: 'salesforce' }));
+  }
 
   await page.goto(LIVE);
   await expect(page.getByText('consultant@example.com')).toBeVisible();
@@ -28,11 +30,12 @@ test('user-supplied consumer key and secret: saved encrypted to the account, nev
   await page.getByLabel('Consumer key').fill(KEY);
   await page.getByLabel(/Consumer secret/).fill(SECRET);
   await expect(page.getByText(/less safe than PKCE/)).toBeVisible();
-  await page.getByLabel(/Save to my account/).check();
+  await page.getByRole('radiogroup', { name: 'Org type' }).getByText('Sandbox').click();
+  await page.getByLabel(/Save this connection to my account/).check();
   await page.getByLabel('Name').fill('Acme sandbox');
   await page.getByRole('button', { name: 'Connect to Salesforce' }).click();
 
-  await page.waitForURL(/login\.salesforce\.com\/services\/oauth2\/authorize/);
+  await page.waitForURL(/test\.salesforce\.com\/services\/oauth2\/authorize/);
   const authorize = new URL(page.url());
   expect(authorize.searchParams.get('client_id')).toBe(KEY);
   expect(authorize.searchParams.get('code_challenge_method')).toBe('S256');
@@ -46,16 +49,24 @@ test('user-supplied consumer key and secret: saved encrypted to the account, nev
   expect(listed).toContain('Acme sandbox');
   expect(listed).not.toContain(SECRET);
 
-  // The saved credentials are used without retyping the secret.
-  await expect(page.getByLabel('Saved to your account')).toContainText('Acme sandbox');
+  // A saved connection needs nothing else: no org type, no setup notes, no secret, and never the whole key.
+  const saved = page.getByRole('radiogroup', { name: 'Saved connections' });
+  await expect(saved).toContainText('Acme sandbox · Sandbox · key USERKE…7890 · with secret');
+  await expect(page.getByText(KEY)).toHaveCount(0);
+  expect(await page.content()).not.toContain(KEY);
+  await expect(page.getByRole('radiogroup', { name: 'Org type' })).toHaveCount(0);
+  await expect(page.getByText('Recommended: PKCE, no secret.')).toHaveCount(0);
   await expect(page.getByLabel(/Consumer secret/)).toHaveCount(0);
-  await page.getByRole('button', { name: 'Connect to Salesforce' }).click();
-  await page.waitForURL(/login\.salesforce\.com\/services\/oauth2\/authorize/);
+  await page.getByRole('button', { name: 'Connect to Acme sandbox' }).click();
+  await page.waitForURL(/test\.salesforce\.com\/services\/oauth2\/authorize/);
   expect(new URL(page.url()).searchParams.get('client_id')).toBe(KEY);
 
-  // Deleting removes it from the account.
+  // "New connection" brings the full form back; deleting removes the saved one from the account.
   await page.goto(LIVE);
-  await page.getByRole('button', { name: 'Delete these saved credentials' }).click();
+  await saved.getByText('New connection…').click();
+  await expect(page.getByText('Recommended: PKCE, no secret.')).toBeVisible();
+  await saved.getByText('Acme sandbox').click();
+  await page.getByRole('button', { name: 'Delete “Acme sandbox”' }).click();
   await expect(page.getByLabel('Consumer key')).toBeVisible();
   expect(await (await page.request.get(`${LIVE}/api/credentials`)).json()).toEqual([]);
 });

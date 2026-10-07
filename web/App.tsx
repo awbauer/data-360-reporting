@@ -11,6 +11,7 @@ import { Explorer } from './pages/Explorer';
 import { HistoryPage } from './pages/History';
 import { LibraryPage } from './pages/Library';
 import { Overview } from './pages/Overview';
+import { SegmentsPage } from './pages/Segments';
 import { NotAllowed, SignIn } from './pages/SignIn';
 
 // The editor pulls in CodeMirror, so load it only when the Query page is opened.
@@ -53,6 +54,7 @@ function Shell() {
         <nav className="nav" aria-label="Primary">
           <NavLink to="/overview">Overview</NavLink>
           <NavLink to="/explorer">Explorer</NavLink>
+          <NavLink to="/segments">Segments</NavLink>
           <NavLink to="/query">Query</NavLink>
           <NavLink to="/library">Library</NavLink>
           <NavLink to="/history">History</NavLink>
@@ -78,6 +80,7 @@ function Shell() {
         <Route path="/" element={<Navigate to="/overview" replace />} />
         <Route path="/overview" element={<main className="main"><Overview /></main>} />
         <Route path="/explorer/*" element={<main className="main flush"><Explorer /></main>} />
+        <Route path="/segments" element={<main className="main"><SegmentsPage /></main>} />
         <Route path="/query" element={<main className="main flush"><Suspense fallback={<div className="hint">Loading editor…</div>}><QueryPage /></Suspense></main>} />
         <Route path="/library" element={<main className="main"><LibraryPage /></main>} />
         <Route path="/history" element={<main className="main"><HistoryPage /></main>} />

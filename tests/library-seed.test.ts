@@ -18,3 +18,23 @@ describe('seed query library', () => {
     expect(res.rows.length).toBeGreaterThan(0);
   });
 });
+
+describe('identity resolution queries against the mock', () => {
+  const run = async (id: string) => {
+    const e = entries.find((x) => x.id === id)!;
+    return client.submitQuery({ sql: e.sql, dataspace: 'default', params: toSqlParameters(e.sql, e.params, {}) });
+  };
+
+  it('agree with each other: cluster sizes add up to the linked source profiles', async () => {
+    const [source, unified, rate] = (await run('identity/consolidation-rate')).rows[0] as number[];
+    expect(source).toBe(2500);
+    expect(unified).toBeLessThan(source!);
+    expect(rate).toBeCloseTo(1 - unified! / source!, 3);
+    const dist = (await run('identity/cluster-size-distribution')).rows as number[][];
+    expect(dist.reduce((n, r) => n + r[2]!, 0)).toBe(source);
+    expect(dist.reduce((n, r) => n + r[1]!, 0)).toBe(unified);
+    expect((await run('identity/unlinked-individuals')).rows).toEqual([[0]]);
+    const big = (await run('identity/largest-clusters')).rows as number[][];
+    expect(big.every((r) => r[1]! >= 3)).toBe(true);
+  });
+});

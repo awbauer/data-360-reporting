@@ -9,7 +9,7 @@ import { createConnectClient, type SessionHolder } from './data360/client';
 import { UpstreamError, type Data360Client } from './data360/types';
 import { assertAllowedOrigin, HostNotAllowedError } from './hosts';
 import { authorizeUrl, exchangeCode, OAuthError, revokeToken, type FetchLike, type OAuthTx, type Session } from './oauth';
-import type { RunRecord, Store } from './store';
+import { maskClientId, type RunRecord, type Store } from './store';
 import type { Block } from './admin-store';
 import { registerAdminRoutes } from './admin-routes';
 import { toCsvLine } from '../shared/csv';
@@ -53,6 +53,8 @@ const CLIENT_SECRET_RE = /^\S{8,256}$/;
 interface Credentials {
   clientId: string;
   clientSecret?: string;
+  /** Where to sign in; set for saved connections, which then ignore the page's org-type choice. */
+  loginHost?: string;
 }
 
 const paramDef = z.object({
@@ -61,13 +63,18 @@ const paramDef = z.object({
   label: z.string().optional(),
   default: z.string().optional(),
 });
+const loginChoice = {
+  env: z.enum(['production', 'sandbox', 'custom']).optional(),
+  domain: z.string().trim().max(255).optional(),
+};
 const credentialFields = {
   clientId: z.string().trim().regex(CLIENT_ID_RE, 'That does not look like a consumer key'),
   clientSecret: z.string().regex(CLIENT_SECRET_RE, 'That does not look like a consumer secret').optional(),
   label: z.string().trim().max(80).optional(),
+  ...loginChoice,
 };
 const credentialsBody = z.union([
-  z.object({ savedId: z.string().uuid() }),
+  z.object({ savedId: z.string().uuid(), ...loginChoice }),
   z.object({ ...credentialFields, remember: z.boolean().default(false) }),
 ]);
 const queryBody = z.object({
@@ -79,6 +86,14 @@ const queryBody = z.object({
 });
 
 export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, store }: AppDeps): Hono<Env> {
+  /** Production, Sandbox or a My Domain (checked against the host allowlist) to a login origin. */
+  const loginHostFor = (env: string | undefined, domain: string | undefined): string =>
+    env === 'sandbox'
+      ? 'https://test.salesforce.com'
+      : env === 'custom'
+        ? assertAllowedOrigin(domain ?? '', config.allowedHostSuffixes)
+        : config.loginUrl;
+
   const app = new Hono<Env>();
   const cookieOpts = { httpOnly: true, secure: config.secureCookies, sameSite: 'Lax' as const, path: '/' };
 
@@ -192,17 +207,12 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
         });
         return c.redirect('/');
       }
-      const env = c.req.query('env') ?? 'production';
-      const loginHost =
-        env === 'sandbox'
-          ? 'https://test.salesforce.com'
-          : env === 'custom'
-            ? assertAllowedOrigin(c.req.query('domain') ?? '', config.allowedHostSuffixes)
-            : config.loginUrl;
-      // Credentials the user entered (set just before by POST /auth/credentials) override the app's own.
+      // Credentials the user entered or picked (set just before by POST /auth/credentials) override
+      // the app's own, and a saved connection's login host overrides the org-type choice.
       const credToken = getCookie(c, CRED_COOKIE);
       deleteCookie(c, CRED_COOKIE, { path: '/' });
       const cred = credToken ? await unseal<Credentials>(config.sessionKey, credToken, P.cred(user)) : null;
+      const loginHost = cred?.loginHost ?? loginHostFor(c.req.query('env'), c.req.query('domain'));
       const clientId = cred?.clientId ?? config.clientId;
       if (!clientId) return fail('No consumer key configured. Enter one under Advanced.');
       const verifier = randomToken(48);
@@ -237,24 +247,36 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
       if (row.secretEnc && !secret) {
         return c.json({ error: 'saved_unreadable', message: 'The saved secret can no longer be decrypted (SESSION_KEY changed?). Delete it and save it again.' }, 400);
       }
-      cred = { clientId: row.clientId, ...(secret ? { clientSecret: secret } : {}) };
+      // Connections saved before hosts were stored take the page's choice once, and keep it.
+      let loginHost = row.loginHost;
+      if (!loginHost) {
+        loginHost = loginHostFor(body.env, body.domain);
+        await store.setCredentialLoginHost(user.id, body.savedId, loginHost);
+      }
+      cred = { clientId: row.clientId, ...(secret ? { clientSecret: secret } : {}), loginHost };
       savedId = body.savedId;
       await store.touchCredential(user.id, savedId);
     } else {
-      cred = { clientId: body.clientId, ...(body.clientSecret ? { clientSecret: body.clientSecret } : {}) };
-      if (body.remember) savedId = await saveCredential(user, body);
+      const loginHost = body.env ? loginHostFor(body.env, body.domain) : undefined;
+      cred = { clientId: body.clientId, ...(body.clientSecret ? { clientSecret: body.clientSecret } : {}), ...(loginHost ? { loginHost } : {}) };
+      if (body.remember) savedId = await saveCredential(user, { ...body, loginHost: loginHost ?? config.loginUrl });
     }
     setCookie(c, CRED_COOKIE, await seal(config.sessionKey, cred, TX_TTL, P.cred(user)), { ...cookieOpts, maxAge: TX_TTL });
-    return c.json({ clientId: cred.clientId, hasSecret: Boolean(cred.clientSecret), ...(savedId ? { savedId } : {}) });
+    return c.json({
+      clientIdHint: maskClientId(cred.clientId),
+      hasSecret: Boolean(cred.clientSecret),
+      ...(cred.loginHost ? { loginHost: cred.loginHost } : {}),
+      ...(savedId ? { savedId } : {}),
+    });
   });
 
-  const saveCredential = async (user: AppUser, b: { clientId: string; clientSecret?: string; label?: string }): Promise<string> => {
+  const saveCredential = async (user: AppUser, b: { clientId: string; clientSecret?: string; label?: string; loginHost: string }): Promise<string> => {
     if ((await store.listCredentials(user.id)).length >= MAX_SAVED_CREDENTIALS) {
       throw new RangeError(`You can save at most ${MAX_SAVED_CREDENTIALS} credentials. Delete one first.`);
     }
     const id = crypto.randomUUID();
     const secretEnc = b.clientSecret ? await seal(config.sessionKey, b.clientSecret, SAVED_TTL, P.saved(user, id)) : null;
-    await store.saveCredential(user.id, { id, label: b.label || `${b.clientId.slice(0, 12)}…`, clientId: b.clientId, secretEnc });
+    await store.saveCredential(user.id, { id, label: b.label || new URL(b.loginHost).host, clientId: b.clientId, secretEnc, loginHost: b.loginHost });
     return id;
   };
 
@@ -339,7 +361,7 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
 
   app.post('/api/credentials', async (c) => {
     const body = z.object(credentialFields).parse(await c.req.json());
-    return c.json({ id: await saveCredential(c.get('user')!, body) });
+    return c.json({ id: await saveCredential(c.get('user')!, { ...body, loginHost: loginHostFor(body.env, body.domain) }) });
   });
 
   app.delete('/api/credentials/:id', async (c) => {
@@ -523,6 +545,7 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
     if (err instanceof ZodError) {
       return c.json({ error: 'bad_request', message: err.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') }, 400);
     }
+    if (err instanceof HostNotAllowedError) return c.json({ error: 'bad_request', message: err.message }, 400);
     if (err instanceof RangeError || err instanceof SyntaxError || (err instanceof Error && /^(Parameter|Missing value)/.test(err.message))) {
       return c.json({ error: 'bad_request', message: err.message }, 400);
     }

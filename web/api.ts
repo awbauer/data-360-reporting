@@ -1,4 +1,4 @@
-import type { DataSpace, Extras, ObjectMeta, ParamDef, QueryChunk, QueryColumn, QueryResponse } from '@shared/types';
+import type { DataSpace, Extras, InsightDefinition, MappingResult, ObjectMeta, ParamDef, QueryChunk, QueryColumn, QueryResponse } from '@shared/types';
 
 export class ApiError extends Error {
   constructor(
@@ -54,13 +54,21 @@ export interface SessionInfo {
   defaultClientConfigured: boolean;
 }
 
+/** Production, Sandbox or a My Domain host. */
+export interface LoginChoice {
+  env?: 'production' | 'sandbox' | 'custom';
+  domain?: string;
+}
+
 export type CredentialsInput =
-  | { savedId: string }
-  | { clientId: string; clientSecret?: string; remember?: boolean; label?: string };
+  | ({ savedId: string } & LoginChoice)
+  | ({ clientId: string; clientSecret?: string; remember?: boolean; label?: string } & LoginChoice);
 
 export interface CredentialsResult {
-  clientId: string;
+  /** The key's first and last few characters; the page never gets the whole key back. */
+  clientIdHint: string;
   hasSecret: boolean;
+  loginHost?: string;
   /** Present when saved credentials were used or `remember` was requested. */
   savedId?: string;
 }
@@ -69,7 +77,10 @@ export interface CredentialsResult {
 export interface SavedCredential {
   id: string;
   label: string;
-  clientId: string;
+  /** e.g. "3MVG9A…x7Qk". */
+  clientIdHint: string;
+  /** Where it signs in; null for connections saved before this was stored. */
+  loginHost: string | null;
   hasSecret: boolean;
   createdAt: number;
   lastUsedAt: number | null;
@@ -236,6 +247,9 @@ export const api = {
   metadata: (dataspace: string) =>
     request<{ objects: ObjectMeta[]; warnings: string[] }>(`/api/metadata?dataspace=${enc(dataspace)}`),
   extras: (dataspace: string) => request<Extras>(`/api/extras?dataspace=${enc(dataspace)}`),
+  mappings: (dataspace: string, object: string, kind: 'dmo' | 'dlo') =>
+    request<MappingResult>(`/api/mappings?dataspace=${enc(dataspace)}&kind=${kind}&object=${enc(object)}`),
+  insight: (dataspace: string, name: string) => request<InsightDefinition>(`/api/insights/${enc(name)}?dataspace=${enc(dataspace)}`),
   submit: (input: RunInput) => request<QueryResponse>('/api/query', { method: 'POST', json: input }),
   status: (id: string, dataspace: string, waitMs: number, signal?: AbortSignal) =>
     request<QueryStatus>(`/api/query/${enc(id)}?dataspace=${enc(dataspace)}&wait=${waitMs}`, { signal }),

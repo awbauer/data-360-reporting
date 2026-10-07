@@ -1,13 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { Listing, SegmentInfo, StreamInfo } from '@shared/types';
+import type { Extras, Listing, SegmentInfo, StreamInfo } from '@shared/types';
 import { api } from '../api';
 import { Bars } from '../components/Bars';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useWorkbench } from '../context';
 import { fmtAgo, fmtNum } from '../lib/format';
 import { computeOverview } from '@shared/overview';
+import { exportDictionary, exportHealth, type DictionaryFormat, type HealthFormat } from '../lib/exports';
 import { useRowCounts } from '../lib/useRowCounts';
 
 export function Overview() {
@@ -57,6 +58,8 @@ export function Overview() {
       {wb.warnings.map((w) => (
         <div className="alert warn" key={w}>Partial metadata: {w}</div>
       ))}
+
+      <Exports extrasLoading={extras.isLoading} extras={extras.data ?? null} extrasError={extras.error?.message} />
 
       <div className="grid tiles">
         <Tile n={stats.counts.dmo} label="Data model objects" sub={stats.dmoByCategory.map(([c, n]) => `${n} ${c}`).join(' · ') || undefined} />
@@ -200,5 +203,49 @@ function ExtraTile<T>({ label, listing, loading, sub }: {
       <div className="lbl">{label}</div>
       <div className="sub">{sub(listing)}</div>
     </div>
+  );
+}
+
+/** Data dictionary (#5) and health check (#6): built from what's loaded and cached, so no queries run. */
+function Exports({ extras, extrasLoading, extrasError }: { extras: Extras | null; extrasLoading: boolean; extrasError?: string }) {
+  const wb = useWorkbench();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const ctx = () => ({ host: wb.session.instanceHost ?? '', dataspace: wb.dataspace, at: new Date() });
+  const run = async (label: string, fn: () => Promise<void>) => {
+    setBusy(label);
+    setError(null);
+    try {
+      await fn();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const dict = (f: DictionaryFormat) => run(`dict-${f}`, () => exportDictionary(f, wb.objects, ctx()));
+  const health = (f: HealthFormat) =>
+    run(`health-${f}`, () => exportHealth(f, { objects: wb.objects, warnings: wb.warnings, extras, ...(extrasError ? { extrasError } : {}) }, ctx()));
+  return (
+    <section className="card">
+      <div className="row wrap" style={{ gap: 16 }}>
+        <div className="grow small muted" style={{ minWidth: 240 }}>
+          Exports use the metadata already loaded and the row counts and profiles cached in this browser. They run no queries
+          and contain no row data.
+        </div>
+        <div className="row wrap" role="group" aria-label="Data dictionary export">
+          <b className="small">Data dictionary</b>
+          <button onClick={() => void dict('xlsx')} disabled={Boolean(busy) || !wb.objects.length}>Excel</button>
+          <button onClick={() => void dict('csv')} disabled={Boolean(busy) || !wb.objects.length}>CSV (zip)</button>
+          <button onClick={() => void dict('md')} disabled={Boolean(busy) || !wb.objects.length}>Markdown</button>
+        </div>
+        <div className="row wrap" role="group" aria-label="Health check export">
+          <b className="small">Health check</b>
+          <button onClick={() => void health('html')} disabled={Boolean(busy) || extrasLoading} title="A printable page; use your browser's Print to save it as PDF">HTML</button>
+          <button onClick={() => void health('md')} disabled={Boolean(busy) || extrasLoading}>Markdown</button>
+        </div>
+      </div>
+      {error && <div className="alert error small" role="alert" style={{ marginTop: 8 }}>Export failed: {error}</div>}
+    </section>
   );
 }

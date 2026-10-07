@@ -158,33 +158,43 @@ export function createStore(db: SqlDatabase) {
 
     async listCredentials(userId: string): Promise<SavedCredential[]> {
       const { results } = await db
-        .prepare(`select id, label, client_id, secret_enc is not null as has_secret, created_at, last_used_at
+        .prepare(`select id, label, client_id, login_host, secret_enc is not null as has_secret, created_at, last_used_at
                   from sf_credentials where user_id = ? order by coalesce(last_used_at, created_at) desc`)
         .bind(userId)
-        .all<{ id: string; label: string; client_id: string; has_secret: number; created_at: number; last_used_at: number | null }>();
+        .all<{ id: string; label: string; client_id: string; login_host: string | null; has_secret: number; created_at: number; last_used_at: number | null }>();
       return results.map((r) => ({
         id: r.id,
         label: r.label,
-        clientId: r.client_id,
+        clientIdHint: maskClientId(r.client_id),
+        loginHost: r.login_host,
         hasSecret: Boolean(r.has_secret),
         createdAt: r.created_at,
         lastUsedAt: r.last_used_at,
       }));
     },
 
-    async getCredential(userId: string, id: string): Promise<{ clientId: string; secretEnc: string | null } | null> {
+    async getCredential(userId: string, id: string): Promise<{ clientId: string; secretEnc: string | null; loginHost: string | null } | null> {
       const r = await db
-        .prepare(`select client_id, secret_enc from sf_credentials where user_id = ? and id = ?`)
+        .prepare(`select client_id, secret_enc, login_host from sf_credentials where user_id = ? and id = ?`)
         .bind(userId, id)
-        .first<{ client_id: string; secret_enc: string | null }>();
-      return r ? { clientId: r.client_id, secretEnc: r.secret_enc } : null;
+        .first<{ client_id: string; secret_enc: string | null; login_host: string | null }>();
+      return r ? { clientId: r.client_id, secretEnc: r.secret_enc, loginHost: r.login_host } : null;
     },
 
-    async saveCredential(userId: string, c: { id: string; label: string; clientId: string; secretEnc: string | null }, at = Date.now()) {
+    async saveCredential(
+      userId: string,
+      c: { id: string; label: string; clientId: string; secretEnc: string | null; loginHost: string | null },
+      at = Date.now(),
+    ) {
       await db
-        .prepare(`insert into sf_credentials (id, user_id, label, client_id, secret_enc, created_at) values (?, ?, ?, ?, ?, ?)`)
-        .bind(c.id, userId, c.label, c.clientId, c.secretEnc, at)
+        .prepare(`insert into sf_credentials (id, user_id, label, client_id, secret_enc, login_host, created_at) values (?, ?, ?, ?, ?, ?, ?)`)
+        .bind(c.id, userId, c.label, c.clientId, c.secretEnc, c.loginHost, at)
         .run();
+    },
+
+    /** Fills in the login host of a connection saved before hosts were remembered. */
+    async setCredentialLoginHost(userId: string, id: string, loginHost: string): Promise<void> {
+      await db.prepare(`update sf_credentials set login_host = ? where user_id = ? and id = ? and login_host is null`).bind(loginHost, userId, id).run();
     },
 
     async touchCredential(userId: string, id: string, at = Date.now()): Promise<void> {
@@ -199,10 +209,17 @@ export function createStore(db: SqlDatabase) {
 
 export type Store = ReturnType<typeof createStore>;
 
+/** Enough of a consumer key to tell saved connections apart; the page never needs the whole key. */
+export function maskClientId(id: string): string {
+  return id.length <= 12 ? `${id.slice(0, 4)}…` : `${id.slice(0, 6)}…${id.slice(-4)}`;
+}
+
 export interface SavedCredential {
   id: string;
   label: string;
-  clientId: string;
+  clientIdHint: string;
+  /** e.g. https://login.salesforce.com; null for connections saved before hosts were stored. */
+  loginHost: string | null;
   hasSecret: boolean;
   createdAt: number;
   lastUsedAt: number | null;

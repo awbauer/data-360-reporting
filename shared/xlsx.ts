@@ -13,7 +13,7 @@ export interface XlsxSheet {
 
 // XML 1.0 forbids most control characters even when escaped.
 // eslint-disable-next-line no-control-regex
-const INVALID_XML = /[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/g;
+const INVALID_XML = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g;
 
 const esc = (s: string) =>
   s.replace(INVALID_XML, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

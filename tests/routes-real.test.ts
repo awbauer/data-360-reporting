@@ -122,7 +122,7 @@ describe('OAuth', () => {
     });
     const { app, jar, prepare } = await withCredentials(fetchFn, { clientId: 'USERKEY12345678', clientSecret: 'user-secret-value' });
     expect(JSON.stringify(prepare)).not.toContain('user-secret-value');
-    expect(prepare).toEqual({ clientId: 'USERKEY12345678', hasSecret: true });
+    expect(prepare).toEqual({ clientIdHint: 'USERKE…5678', hasSecret: true });
     const { cb } = await finishLogin(app, jar);
     expect(cb.headers.get('location')).toBe('/');
     expect(new URLSearchParams(calls[0]!.body).get('client_secret')).toBe('user-secret-value');
@@ -151,15 +151,43 @@ describe('OAuth', () => {
     expect(row!.label).toBe('Acme prod');
     expect(JSON.stringify(row)).not.toContain('user-secret-value');
     const list = await (await app.request('/api/credentials')).json();
-    expect(list).toMatchObject([{ id: savedId, label: 'Acme prod', clientId: 'USERKEY12345678', hasSecret: true }]);
+    expect(list).toMatchObject([{ id: savedId, label: 'Acme prod', clientIdHint: 'USERKE…5678', loginHost: 'https://login.salesforce.com', hasSecret: true }]);
     expect(JSON.stringify(list)).not.toContain('user-secret');
+    expect(JSON.stringify(list)).not.toContain('USERKEY12345678'); // the page never gets the whole key
     // A later visit presents only the id.
     const jar = cookieJar();
     const res = await app.request('/auth/credentials', { method: 'POST', headers: H, body: JSON.stringify({ savedId }) });
     jar.absorb(res);
-    expect(await res.json()).toEqual({ clientId: 'USERKEY12345678', hasSecret: true, savedId });
+    expect(await res.json()).toEqual({ clientIdHint: 'USERKE…5678', hasSecret: true, loginHost: 'https://login.salesforce.com', savedId });
     await finishLogin(app, jar);
     expect(new URLSearchParams(calls[0]!.body).get('client_secret')).toBe('user-secret-value');
+  });
+
+  it('remembers where a saved connection signs in, and ignores the page choice when it is used', async () => {
+    const { fetchFn } = fakeSalesforce(() => tokenOk());
+    const { app, prepare } = await withCredentials(fetchFn, { clientId: 'USERKEY12345678', remember: true, env: 'custom', domain: 'acme.my.salesforce.com' });
+    const savedId = (prepare as { savedId: string }).savedId;
+    expect(prepare).toMatchObject({ loginHost: 'https://acme.my.salesforce.com' });
+    const [entry] = await (await app.request('/api/credentials')).json();
+    expect(entry).toMatchObject({ label: 'acme.my.salesforce.com', loginHost: 'https://acme.my.salesforce.com' });
+    const jar = cookieJar();
+    jar.absorb(await app.request('/auth/credentials', { method: 'POST', headers: H, body: JSON.stringify({ savedId }) }));
+    const login = await app.request('/auth/login?env=sandbox', { headers: { cookie: jar.header() } });
+    expect(login.headers.get('location')).toMatch(/^https:\/\/acme\.my\.salesforce\.com\/services\/oauth2\/authorize/);
+    // A My Domain outside the allowlist can't be saved.
+    const bad = await app.request('/auth/credentials', { method: 'POST', headers: H, body: JSON.stringify({ clientId: 'USERKEY12345678', remember: true, env: 'custom', domain: 'evil.example.com' }) });
+    expect(bad.status).toBe(400);
+  });
+
+  it('asks once where an older saved connection signs in, then keeps it', async () => {
+    const { fetchFn } = fakeSalesforce(() => tokenOk());
+    const { app, prepare } = await withCredentials(fetchFn, { clientId: 'USERKEY12345678', remember: true });
+    const savedId = (prepare as { savedId: string }).savedId;
+    await app.db.prepare('update sf_credentials set login_host = null where id = ?').bind(savedId).run();
+    const first = await (await app.request('/auth/credentials', { method: 'POST', headers: H, body: JSON.stringify({ savedId, env: 'sandbox' }) })).json();
+    expect(first.loginHost).toBe('https://test.salesforce.com');
+    const again = await (await app.request('/auth/credentials', { method: 'POST', headers: H, body: JSON.stringify({ savedId, env: 'production' }) })).json();
+    expect(again.loginHost).toBe('https://test.salesforce.com');
   });
 
   it("keeps saved credentials per user, and can't decrypt a secret moved to another row or key", async () => {
