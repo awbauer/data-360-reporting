@@ -1,4 +1,4 @@
-import type { CellValue, DataSpace, Extras, ObjectMeta, QueryChunk, QueryColumn, QueryResponse } from '../../shared/types';
+import type { CellValue, DataSpace, Extras, InsightDefinition, MappingResult, ObjectKind, ObjectMeta, QueryChunk, QueryColumn, QueryResponse } from '../../shared/types';
 import type { SqlParameter } from '../../shared/sql';
 
 export interface SubmitQueryInput {
@@ -31,6 +31,9 @@ export interface Data360Client {
   getMetadata(dataspace: string): Promise<MetadataResult>;
   /** Data streams (org-wide) and segments (per data space); each side fails independently. */
   getExtras(dataspace: string): Promise<Extras>;
+  /** DLO → DMO mappings touching `object` (a DMO's sources, or a DLO's targets). */
+  getMappings(dataspace: string, object: string, kind: Exclude<ObjectKind, 'ci'>): Promise<MappingResult>;
+  getCalculatedInsight(dataspace: string, name: string): Promise<InsightDefinition>;
   submitQuery(input: SubmitQueryInput): Promise<QueryResponse>;
   getStatus(queryId: string, dataspace: string, waitMs: number): Promise<QueryStatus>;
   getRows(queryId: string, dataspace: string, offset: number, limit: number): Promise<PageResult>;

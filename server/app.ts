@@ -44,6 +44,7 @@ const MAX_SAVED_CREDENTIALS = 25;
 const MAX_STATE_BYTES = 512 * 1024;
 const STATE_KEYS = new Set(['tabs']);
 const DATASPACE_RE = /^[A-Za-z0-9_]{1,80}$/;
+const OBJECT_NAME_RE = /^[A-Za-z0-9_]{1,255}$/;
 const QUERY_ID_RE = /^[A-Za-z0-9%._~=+-]{1,512}$/;
 const CLIENT_ID_RE = /^[A-Za-z0-9._-]{10,256}$/;
 const CLIENT_SECRET_RE = /^\S{8,256}$/;
@@ -375,6 +376,20 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
   app.get('/api/metadata', async (c) => c.json(await c.get('client')!.getMetadata(dataspaceOf(c))));
 
   app.get('/api/extras', async (c) => c.json(await c.get('client')!.getExtras(dataspaceOf(c))));
+
+  const objectNameOf = (v: string | undefined): string => {
+    if (!v || !OBJECT_NAME_RE.test(v)) throw new RangeError('Invalid object name');
+    return v;
+  };
+
+  // Lineage: which DLOs feed a DMO, or which DMOs a DLO feeds. Metadata only, no query credits.
+  app.get('/api/mappings', async (c) => {
+    const kind = z.enum(['dmo', 'dlo']).parse(c.req.query('kind'));
+    return c.json(await c.get('client')!.getMappings(dataspaceOf(c), objectNameOf(c.req.query('object')), kind));
+  });
+
+  app.get('/api/insights/:name', async (c) =>
+    c.json(await c.get('client')!.getCalculatedInsight(dataspaceOf(c), objectNameOf(c.req.param('name')))));
 
   app.post('/api/query', async (c) => {
     const body = queryBody.parse(await c.req.json());

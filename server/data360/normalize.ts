@@ -2,6 +2,10 @@ import type {
   CellValue,
   DataSpace,
   FieldMeta,
+  InsightDefinition,
+  InsightField,
+  MappingResult,
+  ObjectMapping,
   ObjectKind,
   ObjectMeta,
   QueryColumn,
@@ -144,8 +148,88 @@ export function normalizeStreams(body: unknown): { items: StreamInfo[]; totalSiz
         ...(optStr(o.lastRunStatus) ? { lastRunStatus: str(o.lastRunStatus) } : {}),
         ...(optStr(o.lastRefreshDate) ? { lastRefreshDate: str(o.lastRefreshDate) } : {}),
         ...(optNum(o.totalRecords) !== undefined ? { totalRecords: optNum(o.totalRecords) } : {}),
+        ...(streamDlo(o) ? { dataLakeObject: streamDlo(o) } : {}),
       };
     }),
+  };
+}
+
+/** First non-empty string among `keys` (shapes below are from the spec, not yet a real org). */
+const pick = (o: Json, ...keys: string[]): string | undefined => {
+  for (const k of keys) {
+    const v = o[k];
+    if (typeof v === 'string' && v) return v;
+  }
+  return undefined;
+};
+
+/** Criteria may arrive as a string (escaped JSON) or as an object; keep it as text either way. */
+const asText = (v: unknown): string | undefined =>
+  typeof v === 'string' ? v || undefined : v && typeof v === 'object' ? JSON.stringify(v) : undefined;
+
+function streamDlo(o: Json): string | undefined {
+  const info = obj(o.dataLakeObjectInfo);
+  return pick(info, 'name', 'developerName', 'apiName') ?? pick(o, 'dataLakeObjectName', 'targetDataLakeObject', 'dataLakeObjectApiName');
+}
+
+/**
+ * `GET /ssot/data-model-object-mappings`. The spec calls the list `objectSourceTargetMaps`, each
+ * with source/target entity developer names and `fieldMappings`; other spellings are accepted
+ * until a real org confirms which one ships.
+ */
+export function normalizeMappings(body: unknown): MappingResult {
+  const b = obj(body);
+  const list = Array.isArray(body) ? body : arr(b.objectSourceTargetMaps ?? b.dataModelObjectMappings ?? b.mappings);
+  const mappings = list.map((m): ObjectMapping => {
+    const o = obj(m);
+    const source = pick(o, 'sourceEntityDeveloperName', 'sourceObjectDeveloperName', 'sourceEntity', 'source') ?? pick(obj(o.source), 'name', 'developerName') ?? '';
+    const target = pick(o, 'targetEntityDeveloperName', 'targetObjectDeveloperName', 'targetEntity', 'target') ?? pick(obj(o.target), 'name', 'developerName') ?? '';
+    return {
+      name: pick(o, 'developerName', 'name', 'label') ?? `${source} → ${target}`,
+      source,
+      target,
+      fields: arr(o.fieldMappings ?? o.fields).map((f) => {
+        const x = obj(f);
+        return {
+          source: pick(x, 'sourceFieldDeveloperName', 'sourceField', 'source') ?? '',
+          target: pick(x, 'targetFieldDeveloperName', 'targetField', 'target') ?? '',
+        };
+      }).filter((f) => f.source || f.target),
+    };
+  });
+  return { mappings: mappings.filter((m) => m.source || m.target), raw: body };
+}
+
+function insightFields(v: unknown): InsightField[] {
+  return arr(v).map((f) => {
+    const o = obj(f);
+    const name = pick(o, 'apiName', 'name', 'developerName') ?? '';
+    const formula = pick(o, 'formula', 'expression', 'fieldAggregationType', 'aggregationType');
+    return { name, label: pick(o, 'displayName', 'label') ?? name, ...(formula ? { formula } : {}) };
+  });
+}
+
+/** `GET /ssot/calculated-insights/{apiName}`: one object, or a one-item `calculatedInsights` list. */
+export function normalizeInsight(body: unknown, name: string): InsightDefinition {
+  const b = obj(body);
+  const o = obj(arr(b.calculatedInsights)[0] ?? body);
+  const opt = (k: string, ...keys: string[]) => {
+    const v = pick(o, ...keys);
+    return v ? { [k]: v } : {};
+  };
+  return {
+    name: pick(o, 'apiName', 'name', 'developerName') ?? name,
+    label: pick(o, 'displayName', 'label') ?? name,
+    ...opt('description', 'description'),
+    ...opt('expression', 'expression', 'definition', 'sqlExpression'),
+    ...opt('status', 'calculatedInsightStatus', 'status'),
+    ...opt('lastRunStatus', 'lastRunStatus', 'lastCalcInsightStatus'),
+    ...opt('lastRunAt', 'lastCalcInsightStatusDateTime', 'lastRunDateTime', 'lastProcessedDateTime'),
+    ...opt('definitionType', 'definitionType', 'type'),
+    ...opt('schedule', 'publishScheduleInterval', 'schedule'),
+    dimensions: insightFields(o.dimensions),
+    measures: insightFields(o.measures),
+    raw: body,
   };
 }
 
@@ -161,6 +245,11 @@ export function normalizeSegments(body: unknown): SegmentInfo[] {
       ...(optStr(o.publishStatus) ? { publishStatus: str(o.publishStatus) } : {}),
       ...(optNum(o.lastSegmentMemberCount) !== undefined ? { lastMemberCount: optNum(o.lastSegmentMemberCount) } : {}),
       ...(optStr(o.lastPublishedEndDateTime) ? { lastPublished: str(o.lastPublishedEndDateTime) } : {}),
+      ...(optStr(o.description) ? { description: str(o.description) } : {}),
+      ...(pick(o, 'segmentOnApiName', 'segmentOn') ? { segmentOn: pick(o, 'segmentOnApiName', 'segmentOn')! } : {}),
+      ...(optStr(o.segmentType) ? { segmentType: str(o.segmentType) } : {}),
+      ...(asText(o.includeCriteria) ? { includeCriteria: asText(o.includeCriteria)! } : {}),
+      ...(asText(o.excludeCriteria) ? { excludeCriteria: asText(o.excludeCriteria)! } : {}),
     };
   });
 }

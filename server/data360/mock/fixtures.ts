@@ -121,6 +121,41 @@ const lakeContact = {
   relationships: [],
 };
 
+// Identity resolution output. Names follow the spec's own example (a relationship from
+// ssot__Individual__dlm to IndividualIdentityLink__dlm); confirm them against a real org.
+const unified = {
+  name: 'UnifiedIndividual__dlm',
+  displayName: 'Unified Individual',
+  category: 'Profile',
+  fields: [
+    f('ssot__Id__c', 'Unified Individual Id', 'STRING'),
+    f('ssot__FirstName__c', 'First Name', 'STRING'),
+    f('ssot__LastName__c', 'Last Name', 'STRING'),
+  ],
+  indexes: [],
+  primaryKeys: [{ name: 'ssot__Id__c', displayName: 'Unified Individual Id', indexOrder: '1' }],
+  relationships: [rel('IndividualIdentityLink__dlm', 'UnifiedIndividual__dlm', 'UnifiedRecordId__c', 'ssot__Id__c', 'NTOONE')],
+};
+
+const identityLink = {
+  name: 'IndividualIdentityLink__dlm',
+  displayName: 'Individual Identity Link',
+  category: 'Profile',
+  fields: [
+    f('ssot__Id__c', 'Link Id', 'STRING'),
+    f('SourceRecordId__c', 'Source Record Id', 'STRING'),
+    f('UnifiedRecordId__c', 'Unified Record Id', 'STRING'),
+    f('ssot__DataSourceId__c', 'Data Source', 'STRING'),
+    f('ssot__DataSourceObjectId__c', 'Data Source Object', 'STRING'),
+  ],
+  indexes: [],
+  primaryKeys: [{ name: 'ssot__Id__c', displayName: 'Link Id', indexOrder: '1' }],
+  relationships: [
+    rel('ssot__Individual__dlm', 'IndividualIdentityLink__dlm', 'ssot__Id__c', 'SourceRecordId__c', 'ONETOONE'),
+    rel('IndividualIdentityLink__dlm', 'UnifiedIndividual__dlm', 'UnifiedRecordId__c', 'ssot__Id__c', 'NTOONE'),
+  ],
+};
+
 const ci = {
   name: 'Avg_Spends__cio',
   displayName: 'Avg Spends',
@@ -131,10 +166,55 @@ const ci = {
 };
 
 export const METADATA = {
-  DataModelObject: { metadata: [individual, email, account, engagement, orphan] },
+  DataModelObject: { metadata: [individual, email, account, engagement, orphan, unified, identityLink] },
   DataLakeObject: { metadata: [lakeContact] },
   CalculatedInsight: { metadata: [ci] },
 } as const;
 
 /** Objects visible in the non-default `marketing` data space. */
 export const MARKETING_OBJECTS = new Set(['ssot__Individual__dlm', 'ssot__EmailEngagement__dlm', 'Avg_Spends__cio']);
+
+/** `GET /ssot/data-model-object-mappings` in the spec's shape. */
+export const MAPPINGS = {
+  objectSourceTargetMaps: [
+    {
+      developerName: 'Contact_Home_Individual_Map',
+      sourceEntityDeveloperName: 'Contact_Home__dll',
+      targetEntityDeveloperName: 'ssot__Individual__dlm',
+      fieldMappings: [{ developerName: 'm1', sourceFieldDeveloperName: 'Id__c', targetFieldDeveloperName: 'ssot__Id__c' }],
+    },
+    {
+      developerName: 'Contact_Home_Email_Map',
+      sourceEntityDeveloperName: 'Contact_Home__dll',
+      targetEntityDeveloperName: 'ssot__ContactPointEmail__dlm',
+      fieldMappings: [
+        { developerName: 'm2', sourceFieldDeveloperName: 'Id__c', targetFieldDeveloperName: 'ssot__Id__c' },
+        { developerName: 'm3', sourceFieldDeveloperName: 'Id__c', targetFieldDeveloperName: 'ssot__PartyId__c' },
+        { developerName: 'm4', sourceFieldDeveloperName: 'Email__c', targetFieldDeveloperName: 'ssot__EmailAddress__c' },
+      ],
+    },
+  ],
+};
+
+/** `GET /ssot/calculated-insights/{apiName}`. */
+export const INSIGHTS: Record<string, unknown> = {
+  Avg_Spends__cio: {
+    apiName: 'Avg_Spends__cio',
+    displayName: 'Avg Spends',
+    description: 'Average order value per individual over the last 12 months.',
+    expression:
+      'SELECT AVG(SalesOrder__dlm.grand_total_amount__c) AS Avg_Spend__c, ssot__Individual__dlm.ssot__Id__c AS Id__c, ' +
+      'ssot__Individual__dlm.ssot__FirstName__c AS FirstName__c FROM SalesOrder__dlm JOIN ssot__Individual__dlm ' +
+      'ON SalesOrder__dlm.ssot__SoldToCustomerId__c = ssot__Individual__dlm.ssot__Id__c GROUP BY Id__c, FirstName__c',
+    calculatedInsightStatus: 'ACTIVE',
+    lastCalcInsightStatus: 'SUCCESS',
+    lastCalcInsightStatusDateTime: '2026-10-06T03:00:00Z',
+    definitionType: 'CALCULATED_METRIC',
+    publishScheduleInterval: 'TWENTY_FOUR',
+    dimensions: [
+      { apiName: 'Id__c', displayName: 'Id', formula: 'ssot__Individual__dlm.ssot__Id__c' },
+      { apiName: 'FirstName__c', displayName: 'First Name', formula: 'ssot__Individual__dlm.ssot__FirstName__c' },
+    ],
+    measures: [{ apiName: 'Avg_Spend__c', displayName: 'Avg Spend', formula: 'AVG(SalesOrder__dlm.grand_total_amount__c)' }],
+  },
+};

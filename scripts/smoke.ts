@@ -29,6 +29,16 @@ const config = loadConfig({ SESSION_KEY: 'x'.repeat(40), SF_CLIENT_ID: 'smoke', 
 const creds = credentials();
 const instanceUrl = assertAllowedOrigin(creds.instanceUrl, config.allowedHostSuffixes);
 
+/** Key names two levels down (first array item at each level); never values. */
+const shapeDeep = (v: unknown, depth = 0): string => {
+  if (Array.isArray(v)) return `[${v.length}${v.length && depth < 3 ? ` × ${shapeDeep(v[0], depth + 1)}` : ''}]`;
+  if (v && typeof v === 'object') {
+    const entries = Object.entries(v as Record<string, unknown>);
+    return `{${entries.map(([k, x]) => (depth < 3 && x && typeof x === 'object' ? `${k}:${shapeDeep(x, depth + 1)}` : k)).join(',')}}`;
+  }
+  return typeof v;
+};
+
 const shape = (v: unknown, depth = 0): string => {
   if (Array.isArray(v)) return `[${v.length}${v.length && depth < 1 ? ` × ${shape(v[0], depth + 1)}` : ''}]`;
   if (v && typeof v === 'object') return `{${Object.keys(v).join(',')}}`;
@@ -131,7 +141,53 @@ if (!target) {
 await step(`Data streams and segments (${dataspace})`, async () => {
   const x = await client.getExtras(dataspace);
   console.log(`   dataStreams=${x.dataStreams ? `${x.dataStreams.items.length}/${x.dataStreams.total}` : 'unavailable'} segments=${x.segments ? `${x.segments.items.length}${x.segments.truncated ? '+' : ''}` : 'unavailable'}`);
+  const streams = x.dataStreams?.items ?? [];
+  const segments = x.segments?.items ?? [];
+  console.log(`   streams naming their DLO: ${streams.filter((s) => s.dataLakeObject).length}/${streams.length}`);
+  console.log(`   segments with include criteria: ${segments.filter((s) => s.includeCriteria).length}/${segments.length}; with exclude: ${segments.filter((s) => s.excludeCriteria).length}`);
+  const sample = segments.find((s) => s.includeCriteria)?.includeCriteria;
+  if (sample) console.log(`   include criteria is ${(() => { try { return `JSON ${shapeDeep(JSON.parse(sample))}`; } catch { return 'not JSON'; } })()}`);
   for (const e of x.errors) throw new Error(e);
+});
+
+// Mapping/lineage (#9) and insight definitions (#10) were written from the spec alone. These
+// print key names two levels deep so the normalizers can be checked against what ships.
+const dmo = meta?.objects.find((o) => o.kind === 'dmo' && o.category === 'Profile') ?? meta?.objects.find((o) => o.kind === 'dmo');
+if (dmo) {
+  await step(`Mappings into ${dmo.name}`, async () => {
+    const m = await client.getMappings(dataspace, dmo.name, 'dmo');
+    console.log(`   raw: ${shapeDeep(m.raw)}`);
+    console.log(`   normalized: ${m.mappings.length} mapping(s), ${m.mappings.reduce((n, x) => n + x.fields.length, 0)} field pair(s)`);
+    const src = m.mappings[0]?.source;
+    if (src && meta?.objects.some((o) => o.name === src)) console.log('   source names match metadata names');
+    else if (src) console.log(`   source "${src}" is not a metadata object name: check suffixes (__dll)`);
+  });
+}
+const dlo = meta?.objects.find((o) => o.kind === 'dlo');
+if (dlo) {
+  await step(`Mappings out of ${dlo.name}`, async () => {
+    const m = await client.getMappings(dataspace, dlo.name, 'dlo');
+    console.log(`   raw: ${shapeDeep(m.raw)}`);
+    console.log(`   normalized: ${m.mappings.length} mapping(s)`);
+  });
+}
+const insight = meta?.objects.find((o) => o.kind === 'ci');
+if (insight) {
+  await step(`Calculated insight definition ${insight.name}`, async () => {
+    const d = await client.getCalculatedInsight(dataspace, insight.name);
+    console.log(`   raw: ${shapeDeep(d.raw)}`);
+    console.log(`   normalized: expression=${Boolean(d.expression)} status=${d.status ?? '-'} dims=${d.dimensions.length} measures=${d.measures.length}`);
+  });
+}
+
+// Identity resolution library queries (#11) assume these object names.
+await step('Identity resolution objects present', async () => {
+  const names = new Set(meta?.objects.map((o) => o.name));
+  for (const n of ['UnifiedIndividual__dlm', 'IndividualIdentityLink__dlm']) console.log(`   ${n}: ${names.has(n) ? 'found' : 'MISSING'}`);
+  const link = meta?.objects.find((o) => o.name === 'IndividualIdentityLink__dlm');
+  if (link) console.log(`   link fields: ${link.fields.map((f) => f.name).join(', ')}`);
+  const unifiedLike = meta?.objects.filter((o) => /unified/i.test(o.name)).map((o) => o.name) ?? [];
+  console.log(`   objects named *Unified*: ${unifiedLike.join(', ') || 'none'}`);
 });
 
 // Histograms rely on FLOOR(...) and DATE_TRUNC(...) in Data 360 SQL; confirm both are accepted.
