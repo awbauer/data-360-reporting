@@ -49,29 +49,6 @@ export const profileCache = {
   set: (host: string, ds: string, obj: string, v: ObjectProfile) => writeJson(cacheKey('profile', host, ds, obj), v),
 };
 
-export interface HistoryItem {
-  id: string;
-  at: string;
-  sql: string;
-  dataspace: string;
-  paramDefs: ParamDef[];
-  params: Record<string, string>;
-  rows: number;
-  elapsedMs: number;
-}
-
-const HISTORY_KEY = 'd360:history';
-const HISTORY_MAX = 50;
-
-export const history = {
-  list: () => readJson<HistoryItem[]>(HISTORY_KEY, []),
-  add(item: HistoryItem) {
-    const rest = history.list().filter((h) => !(h.sql === item.sql && h.dataspace === item.dataspace));
-    writeJson(HISTORY_KEY, [item, ...rest].slice(0, HISTORY_MAX));
-  },
-  clear: () => removeKey(HISTORY_KEY),
-};
-
 export interface Draft {
   sql: string;
   dataspace?: string;
@@ -84,17 +61,14 @@ export const draft = {
   set: (d: Draft) => writeJson('d360:draft', d),
 };
 
-/** A consumer key/secret the user chose to keep. `saved` is opaque ciphertext made by the server. */
-export interface SavedCredentials {
-  clientId: string;
-  saved: string;
+/**
+ * History and saved credentials used to live in localStorage; both are now kept per user on the
+ * server. Remove the old copies so they don't linger in a shared browser.
+ */
+export function forgetLegacyData(): void {
+  removeKey('d360:history');
+  removeKey('d360:creds');
 }
-
-export const savedCredentials = {
-  get: () => readJson<SavedCredentials | null>('d360:creds', null),
-  set: (v: SavedCredentials) => writeJson('d360:creds', v),
-  clear: () => removeKey('d360:creds'),
-};
 
 export interface TabData {
   id: string;
@@ -123,18 +97,30 @@ export function emptyTab(existing: TabData[], init: Partial<TabData> = {}): TabD
   };
 }
 
+export function normalizeTabs(saved: TabStore | null | undefined): TabStore | null {
+  if (!saved?.tabs?.length) return null;
+  const tabs = saved.tabs.slice(0, MAX_TABS);
+  return { tabs, active: tabs.some((t) => t.id === saved.active) ? saved.active : tabs[0]!.id };
+}
+
+/**
+ * The browser's copy of a user's tabs. The server copy (/api/state/tabs) wins when it exists;
+ * this one covers the moment before it loads, or a server that can't be reached.
+ */
 export const tabStore = {
-  load(): TabStore {
-    const saved = readJson<TabStore | null>('d360:tabs', null);
-    if (saved?.tabs?.length) {
-      return { tabs: saved.tabs, active: saved.tabs.some((t) => t.id === saved.active) ? saved.active : saved.tabs[0]!.id };
-    }
-    // Before tabs existed there was a single draft.
+  load(user: string): TabStore {
+    // Older builds kept one unscoped set of tabs, and before that a single draft.
+    const saved = normalizeTabs(readJson<TabStore | null>(`d360:tabs:${user}`, null) ?? readJson<TabStore | null>('d360:tabs', null));
+    if (saved) return saved;
     const old = draft.get();
     const first = emptyTab([], old ? { sql: old.sql, paramDefs: old.paramDefs, values: old.params } : {});
     return { tabs: [first], active: first.id };
   },
-  save: (s: TabStore) => writeJson('d360:tabs', s),
+  save(user: string, s: TabStore) {
+    writeJson(`d360:tabs:${user}`, s);
+    removeKey('d360:tabs');
+    removeKey('d360:draft');
+  },
 };
 
 /** "Ask before running a query with no LIMIT" can be silenced for the rest of the browser session. */

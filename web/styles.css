@@ -91,7 +91,12 @@ button:hover:not(:disabled) { background: var(--surface-2); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
-button.link { border: 0; background: none; padding: 0; color: var(--accent); }
+button.link { border: 0; background: none; padding: 0; color: var(--accent); text-align: left; }
+a.button {
+  display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 11px; color: inherit; text-decoration: none;
+}
+a.button:hover { background: var(--surface-2); }
 input, select, textarea {
   background: var(--surface);
   border: 1px solid var(--border);

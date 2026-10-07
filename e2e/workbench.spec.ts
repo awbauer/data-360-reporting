@@ -15,10 +15,13 @@ async function setSql(page: Page, sql: string) {
 
 test.describe.configure({ mode: 'serial' });
 
-test('connect → explore → query → library → disconnect', async ({ page }) => {
-  // The connection is user-initiated: loading the app does not redirect.
+test('sign in → connect → explore → query → library → audit → disconnect → sign out', async ({ page }) => {
+  // App sign-in comes first; in mock mode a local demo user stands in for GitHub/Google.
   await page.goto('/');
+  await page.getByRole('button', { name: 'Continue as demo user' }).click();
+  // The Salesforce connection is user-initiated: signing in does not redirect.
   await expect(page.getByRole('button', { name: 'Start with sample data' })).toBeVisible();
+  await expect(page.getByText('demo@example.com')).toBeVisible();
   expect(new URL(page.url()).pathname).toBe('/');
   await page.getByRole('button', { name: 'Start with sample data' }).click();
 
@@ -201,17 +204,39 @@ test('connect → explore → query → library → disconnect', async ({ page }
   await page.getByRole('button', { name: '▶ Run' }).click();
   await expect(status).toContainText('100 rows');
 
-  // History records completed runs
+  // History: the user's own editor runs, read back from the server
   await page.getByRole('link', { name: 'History' }).click();
   await expect(page.locator('.card').first()).toBeVisible();
   await expect(page.locator('pre.sql').first()).toContainText('ssot__CreatedDate__c');
+  await expect(page.locator('pre.sql', { hasText: 'COUNT(*) AS "rows"' })).toHaveCount(0); // row counts aren't editor runs
+
+  // Audit (demo user is an admin here): every run, including Overview/Explorer ones
+  await page.getByRole('link', { name: 'Audit' }).click();
+  await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible();
+  await expect(page.locator('table.t tbody tr').first()).toContainText('demo@example.com');
+  await expect(page.locator('table.t tbody tr', { hasText: 'overview' }).first()).toBeVisible();
+  await expect(page.locator('table.t tbody tr', { hasText: 'explorer' }).first()).toBeVisible();
+  await expect(page.locator('table.t tbody tr', { hasText: 'failed' }).first()).toBeVisible();
 
   // Data space switch re-reads metadata
   await page.getByRole('link', { name: 'Overview' }).click();
   await page.getByLabel('Data space').selectOption('marketing');
   await expect(tile('Data model objects')).toHaveText('2');
 
-  // Disconnect returns to the connect screen
+  // Disconnect returns to the connect screen; signing out returns to sign-in
+  await page.getByRole('link', { name: 'Query' }).click();
+  const tabs = await page.getByRole('tab').count();
+  await page.waitForTimeout(1800); // tabs save to the account 1.5s after the last change
   await page.getByRole('button', { name: 'Disconnect' }).click();
   await expect(page.getByRole('button', { name: 'Start with sample data' })).toBeVisible();
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('button', { name: 'Continue as demo user' })).toBeVisible();
+  expect((await (await page.request.get('/api/history')).json()).error).toBe('unauthenticated');
+
+  // Tabs follow the account, not the browser
+  await page.evaluate(() => localStorage.clear());
+  await page.getByRole('button', { name: 'Continue as demo user' }).click();
+  await page.getByRole('button', { name: 'Start with sample data' }).click();
+  await page.getByRole('link', { name: 'Query' }).click();
+  await expect(page.getByRole('tab')).toHaveCount(tabs);
 });

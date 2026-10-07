@@ -1,14 +1,25 @@
 # Data 360 Workbench
 
-A web workbench for Salesforce **Data 360** (formerly Data Cloud). Sign in with Salesforce, then:
+A web workbench for Salesforce **Data 360** (formerly Data Cloud). Sign in to the workbench (GitHub or Google), connect a Salesforce org, then:
 
 - **Overview**: high-level abstracts of the org's model (objects by category, field-type mix, relationship hubs, objects with no relationships), plus data stream and segment counts and which streams' last run failed. These come from metadata and list endpoints only, so they use no query credits.
 - **Explorer**: browse data model objects (DMOs), data lake objects (DLOs) and calculated insights, with fields, keys and relationships. Count rows, profile fields (non-null %, approximate distinct, min/max) and see each field's distribution on demand: a **histogram** for numbers and dates (nice bucket edges, or `date_trunc` by hour/day/week/month/quarter/year, with the null share) and top values for everything else. Each object has a clickable **relationship map**, and **Build JOIN** opens a ready-made JOIN of two related objects in the editor.
 - **Query**: a SQL editor with autocomplete from your metadata, `:named` parameters, **multiple tabs**, **Format**, cancel, paging, CSV export and a **Table / Chart** toggle (bar or line of one measure against one dimension). Queries with no `LIMIT` ask first, showing cached row counts for the objects they read.
 - **Library**: a shared set of saved queries that lives in this repository (`queries/`) and changes through pull requests.
-- **History**: your recent runs, kept in your browser only.
+- **History**: your recent editor runs, on any device you sign in from.
+- **Audit** (admins): every query run through the workbench, by whom, against which org, with its outcome. Downloadable as CSV.
 
-The connection is user-initiated: the app never redirects to Salesforce on load.
+The Salesforce connection is user-initiated: the app never redirects to Salesforce on load.
+
+## Two sign-ins, two jobs
+
+| | Workbench account | Salesforce connection |
+|---|---|---|
+| What | [Better Auth](https://www.better-auth.com) with GitHub and/or Google | OAuth web-server flow + PKCE to the org |
+| Decides | Who may use the app (`AUTH_ALLOWED_DOMAINS` / `AUTH_ALLOWED_EMAILS`) | What data they can see (their own Salesforce permissions) |
+| Stored | Users, sessions, saved credentials, tabs, audit log in **D1** (SQLite on Node) | Access/refresh tokens in an encrypted HttpOnly cookie only, **never in the database** |
+
+The Salesforce cookie is bound to the workbench user who connected, so it is useless to anyone else who signs in on the same browser. A leak of the database alone exposes no org tokens, and saved consumer secrets in it are encrypted with `SESSION_KEY`.
 
 ## Quick start (no Salesforce needed)
 
@@ -17,7 +28,7 @@ npm install
 npm run dev        # API on :8787 in mock mode + Vite on :5173; open http://localhost:5173
 ```
 
-Mock mode (`DATA360_MOCK=1`) serves sample objects backed by an in-memory SQLite database, so you can try every screen. The server refuses to start in mock mode when `NODE_ENV=production`.
+Mock mode (`DATA360_MOCK=1`) serves sample objects backed by an in-memory SQLite database, so you can try every screen, and offers a local **demo user** instead of GitHub/Google sign-in. The server refuses to start in mock mode when `NODE_ENV=production`. App data goes to `./data/workbench.db` (`DATABASE_PATH`); migrations in `migrations/` apply on start.
 
 ## Connecting a real org
 
@@ -36,10 +47,9 @@ Only if your org requires a secret for the web-server flow: set `SF_CLIENT_SECRE
 
 **One app, many orgs?** An External Client App only authorizes the org that owns it. To connect another org, users can enter that org's own **consumer key** (and **secret**, if the app requires one) under *Your own External Client App* on the Connect screen:
 
-- The credentials go to the server in a POST body, never a URL, and are parked in a 10-minute sealed cookie for the login redirect. The secret then lives only inside the encrypted session cookie (needed for token refresh). Nothing is stored server-side.
-- With **Remember on this device**, the browser keeps a blob that the server encrypted with AES-GCM under `SESSION_KEY`. It is unreadable without the server, expires after 180 days, and is bound to its purpose so it can't be replayed as a session. **Forget** deletes it. Rotating `SESSION_KEY` invalidates every saved blob and session; users just re-enter their credentials.
+- The credentials go to the server in a POST body, never a URL, and are parked in a 10-minute sealed cookie for the login redirect. The secret then lives inside the encrypted session cookie (needed for token refresh).
+- With **Save to my account**, they are stored in the database under a name (say "Acme sandbox"), so a consultant can keep one per client org and use it from any device. The secret is AES-256-GCM encrypted with `SESSION_KEY` and bound to the owning user and row, so neither a database dump nor a copied row reveals it. Saved credentials are listed without secrets and can be deleted from the Connect screen. Rotating `SESSION_KEY` makes saved secrets unreadable (the app says so); users re-enter them.
 - Without a secret (preferred) the app signs in with PKCE alone. The server's own `SF_CLIENT_SECRET` is never sent with a user-supplied key.
-- Anyone who can run JavaScript on the page (XSS) could use a saved blob against this server, which is one reason the CSP is strict. Another reason to prefer an app without a secret.
 
 ### Verify against your org
 
@@ -56,7 +66,14 @@ It exercises data spaces, metadata, submit/status/rows/cancel and a parameterise
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SESSION_KEY` | random (dev only) | 32+ chars, encrypts session cookies. **Required in production.** |
+| `SESSION_KEY` | random (dev only) | 32+ chars, encrypts the Salesforce session cookie and saved secrets; Better Auth's key is derived from it. **Required in production.** |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | none | GitHub OAuth app for workbench sign-in. Callback `${APP_BASE_URL}/api/auth/callback/github`. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | none | Google OAuth client. Callback `${APP_BASE_URL}/api/auth/callback/google`. At least one provider is **required in production.** |
+| `AUTH_ALLOWED_DOMAINS`, `AUTH_ALLOWED_EMAILS` | none | Who may sign in, comma-separated. Only provider-verified emails match; subdomains don't. **Required in production** (empty means nobody). |
+| `AUTH_ADMIN_EMAILS` | none | Who can open the Audit page (and is allowed in). |
+| `AUDIT_RETENTION_DAYS` | `180` | Audit entries older than this are purged daily. |
+| `BETTER_AUTH_SECRET` | derived | Override Better Auth's signing key. |
+| `DATABASE_PATH` | `./data/workbench.db` | SQLite file on Node. Cloudflare uses the `DB` D1 binding. |
 | `APP_BASE_URL` | `http://localhost:8787` | Public URL; OAuth callback is `${APP_BASE_URL}/auth/callback`. `https://` turns on `Secure` cookies. |
 | `SF_CLIENT_ID` | none | The app's External Client App (consumer key). |
 | `SF_CLIENT_SECRET` | none | Only if your app requires a secret. PKCE without a secret is preferred. |
@@ -76,22 +93,29 @@ It exercises data spaces, metadata, submit/status/rows/cancel and a parameterise
 npm run build && npm start         # or: docker build -t data360-workbench . 
 ```
 
-The app is one stateless Node process: no database, no server-side session store. Session state lives in an encrypted, HttpOnly cookie, so you can run several replicas behind a load balancer as long as they share `SESSION_KEY`.
+On Node, app data (users, sessions, saved credentials, tabs, audit log) is a SQLite file at `DATABASE_PATH` via `node:sqlite` (still flagged experimental in Node 22, so it logs a warning). Run **one** replica, and put the file on a persistent volume (the Docker image declares `/data`). For several replicas, deploy to Cloudflare, where it's D1.
 
 ### Cloudflare Workers
 
 `wrangler.jsonc` deploys the built SPA as static assets and runs the same Hono app in a Worker for `/api/*` and `/auth/*` (a pure static deploy can't work: the OAuth code exchange, the API proxy and the session cookie all need server code). Preview URLs are disabled.
 
 ```bash
-npx wrangler secret put SESSION_KEY        # 32+ random chars
-npx wrangler secret put SF_CLIENT_ID       # or set it under "vars"
-npx wrangler secret put SF_CLIENT_SECRET   # skip: PKCE without a secret is preferred
-npm run deploy                             # wrangler deploy; it runs the build first
+npx wrangler secret put SESSION_KEY            # 32+ random chars (keep the one you have)
+npx wrangler secret put GITHUB_CLIENT_ID       # and GITHUB_CLIENT_SECRET, and/or the GOOGLE_ pair
+npx wrangler secret put GITHUB_CLIENT_SECRET
+npx wrangler secret put AUTH_ADMIN_EMAILS      # optional: who sees the audit log
+npm run deploy                                 # wrangler deploy; it runs the build first
 ```
+
+**D1.** `wrangler.jsonc` binds a D1 database named `data360-workbench` as `DB` without a `database_id`, so the first `wrangler deploy` creates it and records the id. Commit that change, or add the id of a database you made with `npx wrangler d1 create data360-workbench`. The Worker applies `migrations/` itself on its first request (recorded in `d1_migrations`, the same table `npx wrangler d1 migrations apply DB --remote` uses), so a git-triggered deploy never runs against an old schema. A daily cron trigger purges old audit entries.
+
+**Allowlist.** `AUTH_ALLOWED_DOMAINS` is set in `wrangler.jsonc` to `publicissapient.com, publicisgroupe.net, publicis.com`; change it there by pull request. Add individuals (say, a client contact) with `AUTH_ALLOWED_EMAILS`.
+
+**Before deploying this version over an existing one**, set a provider and an allowlist: in production the Worker refuses to start without them, and every request returns 500 until they're set.
 
 The OAuth callback follows the hostname the Worker is reached on (`https://<host>/auth/callback`); set `APP_BASE_URL` only if a different public URL fronts it. Static assets get their security headers from `web/public/_headers`. With a Cloudflare git (Workers Builds) integration, the deploy command is just `npx wrangler deploy`; no separate build command is needed. `npm run cf:dev` runs it locally in workerd (put `SESSION_KEY` and `SF_CLIENT_ID` in `.dev.vars`). The mock adapter isn't available on Workers.
 
-**Access control is up to you.** The app has no user management of its own; it is designed to sit behind something like Cloudflare Access. Anyone who can reach it can start a Salesforce login, but can only see data their own Salesforce user can see. The shared library is the same for everyone.
+**Access control.** Every `/api/*` and `/auth/*` route needs a signed-in workbench user on the allowlist; the allowlist is checked again on every request (so removing someone takes effect within the 5-minute session cache) and on every returning GitHub/Google sign-in. You can still put Cloudflare Access in front, but it's no longer required. The static SPA bundle, which includes the shared query library, is served without sign-in, so treat library queries as visible to anyone who can reach the host.
 
 Security notes:
 
@@ -100,11 +124,14 @@ Security notes:
 - Mutating requests need an `X-D360` header (CSRF guard); there is no CORS. A strict CSP is set.
 - Query ids and data space names are validated before being used in upstream URLs.
 - CSV export neutralizes spreadsheet formulas in text cells (a leading `=`, `+`, `@` or `-` gets a `'` prefix).
-- There is no built-in rate limiting. Put it at the edge if the host is public.
+- Better Auth rate-limits its own sign-in endpoints (in memory, per instance). There is no rate limiting on the query API; put it at the edge if the host is public.
+- Better Auth stores GitHub/Google tokens in `account`, encrypted (`encryptOAuthTokens`); the app never uses them after sign-in.
 
 ## Who runs the queries
 
-Everything runs as the person who signed in. Sign-in is the OAuth authorization-code flow, so the access token is that user's, and the server uses only that token for Connect API calls (there is no integration user or client-credentials flow). Salesforce documents the `cdp_query_api` scope as running SQL "on behalf of the user", and the query endpoints require that user to have permission to the data space. So data access follows the user's own permissions, and the user is the one Salesforce sees. The app itself keeps no log of who ran what; where the Salesforce side records it (for example Event Monitoring) depends on your org's setup, so check that rather than assuming.
+Everything runs as the person who signed in. Sign-in is the OAuth authorization-code flow, so the access token is that user's, and the server uses only that token for Connect API calls (there is no integration user or client-credentials flow). Salesforce documents the `cdp_query_api` scope as running SQL "on behalf of the user", and the query endpoints require that user to have permission to the data space. So data access follows the user's own permissions, and the user is the one Salesforce sees.
+
+The workbench also keeps its own record: every query (from the editor, Explorer and Overview) is written to `query_log` **before** it is sent to Salesforce, with the workbench user's email, the org host, the Salesforce org and user ids from their token, the data space, SQL, parameter values, status, row count and timing. If that write fails, the query does not run. Parameter values are stored as typed, so treat the audit log as sensitive. Users see their own editor runs under History ("Clear" hides them there; the audit keeps them). Admins see everything under Audit and can download it as CSV.
 
 ## Cost awareness
 
@@ -129,7 +156,8 @@ npm run e2e               # builds, then runs Playwright against mock mode
 Layout:
 
 ```
-server/    Hono app: OAuth, sealed-cookie session, Connect API client, mock adapter
+server/    Hono app: Better Auth sign-in, Salesforce OAuth + sealed cookie, audit/store, Connect API client, mock adapter
+migrations/ D1/SQLite schema (applied by the Worker or the Node server on start)
 shared/    SQL helpers, library file format, types (used by server, web and scripts)
 web/       React + Vite SPA (CodeMirror 6 editor, TanStack Query)
 queries/   The shared query library

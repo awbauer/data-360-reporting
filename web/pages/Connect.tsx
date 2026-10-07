@@ -1,6 +1,8 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { api, ApiError, type SessionInfo } from '../api';
-import { savedCredentials, type SavedCredentials } from '../lib/storage';
+import { api, type SessionInfo } from '../api';
+import { UserMenu } from '../components/UserMenu';
+import { useUrlError } from './SignIn';
 
 type Env = 'production' | 'sandbox' | 'custom';
 
@@ -10,20 +12,26 @@ export function Connect({ session }: { session: SessionInfo }) {
   const [domain, setDomain] = useState('');
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
+  const [label, setLabel] = useState('');
   const [remember, setRemember] = useState(false);
-  const [saved, setSaved] = useState<SavedCredentials | null>(() => savedCredentials.get());
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useUrlError();
   const [busy, setBusy] = useState(false);
-
+  const qc = useQueryClient();
+  const savedList = useQuery({ queryKey: ['credentials'], queryFn: api.savedCredentials, enabled: !session.mock });
+  const list = savedList.data ?? [];
+  // '' = type new ones (or use the shared app); otherwise the id of a saved entry.
+  const [savedId, setSavedId] = useState('');
   useEffect(() => {
-    const url = new URL(window.location.href);
-    const e = url.searchParams.get('error');
-    if (e) {
-      setError(e);
-      url.searchParams.delete('error');
-      window.history.replaceState(null, '', url.pathname + url.search);
-    }
-  }, []);
+    if (list.length && !savedId) setSavedId(list[0]!.id);
+  }, [list, savedId]);
+  const saved = list.find((c) => c.id === savedId) ?? null;
+  const remove = useMutation({
+    mutationFn: api.deleteCredential,
+    onSuccess: () => {
+      setSavedId('');
+      void qc.invalidateQueries({ queryKey: ['credentials'] });
+    },
+  });
 
   const connect = async () => {
     setError(null);
@@ -33,14 +41,14 @@ export function Connect({ session }: { session: SessionInfo }) {
         // The user's own credentials go to the server first (never in the URL); it parks them in a
         // short-lived sealed cookie that the login redirect picks up.
         if (saved) {
-          await api.credentials({ saved: saved.saved });
+          await api.credentials({ savedId: saved.id });
         } else if (clientId.trim()) {
-          const res = await api.credentials({
+          await api.credentials({
             clientId: clientId.trim(),
             ...(clientSecret ? { clientSecret } : {}),
+            ...(label.trim() ? { label: label.trim() } : {}),
             remember,
           });
-          if (res.saved) savedCredentials.set({ clientId: res.clientId, saved: res.saved });
         }
         setClientSecret('');
       }
@@ -48,18 +56,9 @@ export function Connect({ session }: { session: SessionInfo }) {
       if (env === 'custom') q.set('domain', domain.trim());
       window.location.assign(`/auth/login?${q}`);
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'saved_unreadable') {
-        savedCredentials.clear();
-        setSaved(null);
-      }
       setError((e as Error).message);
       setBusy(false);
     }
-  };
-
-  const forget = () => {
-    savedCredentials.clear();
-    setSaved(null);
   };
 
   const hasClient = session.defaultClientConfigured || Boolean(saved) || clientId.trim().length > 0;
@@ -74,13 +73,18 @@ export function Connect({ session }: { session: SessionInfo }) {
           if (canConnect) void connect();
         }}
       >
-        <div className="brand">
-          <span className="brand-mark" aria-hidden />
-          Data 360 Workbench
+        <div className="row">
+          <div className="brand grow">
+            <span className="brand-mark" aria-hidden />
+            Data 360 Workbench
+          </div>
+          <UserMenu session={session} />
         </div>
         <p className="muted" style={{ margin: 0 }}>
-          Browse metadata, profile data and run SQL against a Data 360 org. You sign in with Salesforce; nothing is
-          stored about your org on the server. Sign-in uses OAuth with PKCE, so no client secret is needed.
+          Browse metadata, profile data and run SQL against a Data 360 org. Connect with your Salesforce login: queries
+          run as you, with your permissions, and each one is recorded against your workbench account. Your Salesforce
+          tokens stay in an encrypted cookie in this browser, never in the server's database. Sign-in uses OAuth with
+          PKCE, so no client secret is needed.
         </p>
         {error && <div className="alert error" role="alert">{error}</div>}
         {session.mock ? (
@@ -101,7 +105,7 @@ export function Connect({ session }: { session: SessionInfo }) {
                 <input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="acme.my.salesforce.com" autoFocus />
               </label>
             )}
-            <details open={Boolean(saved) || !session.defaultClientConfigured}>
+            <details open={list.length > 0 || !session.defaultClientConfigured}>
               <summary>Your own External Client App{session.defaultClientConfigured ? ' (optional)' : ''}</summary>
               <div className="alert small" style={{ marginTop: 10 }}>
                 <b>Recommended: PKCE, no secret.</b> Sign-in always uses PKCE. In your External Client App, enable the
@@ -110,13 +114,30 @@ export function Connect({ session }: { session: SessionInfo }) {
                 <code>refresh_token</code>, <code>cdp_query_api</code> and <code>cdp_profile_api</code>. Then paste just
                 the consumer key. An app only authorizes the org that owns it, so use each org's own key.
               </div>
+              {list.length > 0 && (
+                <label style={{ marginTop: 10 }}>
+                  Saved to your account
+                  <select value={savedId} onChange={(e) => setSavedId(e.target.value)}>
+                    {list.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label} ({c.clientId.slice(0, 10)}…{c.hasSecret ? ', with secret' : ''})
+                      </option>
+                    ))}
+                    <option value="">Enter different credentials…</option>
+                  </select>
+                </label>
+              )}
               {saved ? (
                 <div className="stack" style={{ marginTop: 10 }}>
-                  <div className="alert">
-                    Using the credentials saved on this device: <code>{saved.clientId}</code>. The secret is stored
-                    encrypted; only this server can decrypt it.
+                  <div className="alert small">
+                    Using <b>{saved.label}</b>: <code>{saved.clientId}</code>.
+                    {saved.hasSecret && ' Its secret is stored encrypted and is only decrypted for your sign-in.'}
                   </div>
-                  <div><button type="button" onClick={forget}>Forget and enter different credentials</button></div>
+                  <div>
+                    <button type="button" onClick={() => remove.mutate(saved.id)} disabled={remove.isPending}>
+                      Delete these saved credentials
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="stack" style={{ marginTop: 10 }}>
@@ -143,8 +164,14 @@ export function Connect({ session }: { session: SessionInfo }) {
                   </label>
                   <label style={{ flexDirection: 'row', alignItems: 'center', gap: 8, color: 'var(--text)', fontSize: 13 }}>
                     <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} disabled={!clientId.trim()} style={{ width: 'auto' }} />
-                    Remember on this device (secret encrypted)
+                    Save to my account{clientSecret ? ' (secret encrypted)' : ''}
                   </label>
+                  {remember && (
+                    <label>
+                      Name
+                      <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Acme production" maxLength={80} />
+                    </label>
+                  )}
                   {clientSecret && (
                     <div className="alert warn small" role="note">
                       A secret is less safe than PKCE alone. If your app lets you, turn off “Require secret for Web
@@ -152,9 +179,8 @@ export function Connect({ session }: { session: SessionInfo }) {
                     </div>
                   )}
                   <p className="small muted" style={{ margin: 0 }}>
-                    Used only for your sign-in. The secret is held in an encrypted session cookie and is never put in a
-                    URL or stored on the server. If you remember it, the browser keeps only ciphertext that this server
-                    can decrypt.
+                    Used only for your sign-in and never put in a URL. If you save them, the secret is encrypted with the
+                    server's key and bound to your account, so the database alone can't reveal it.
                   </p>
                 </div>
               )}

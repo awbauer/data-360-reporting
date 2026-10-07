@@ -1,0 +1,207 @@
+import type { SqlDatabase } from './db';
+import type { ParamDef } from '../shared/types';
+
+export type RunStatus = 'running' | 'done' | 'failed' | 'cancelled';
+export type RunSource = 'editor' | 'explorer' | 'overview' | 'library';
+
+export interface RunRecord {
+  id: string;
+  userId: string;
+  userEmail: string;
+  instanceHost: string;
+  sfOrgId: string | null;
+  sfUserId: string | null;
+  dataspace: string;
+  source: RunSource;
+  sql: string;
+  paramDefs: ParamDef[];
+  params: Record<string, string>;
+  queryId: string | null;
+  status: RunStatus;
+  rowCount: number | null;
+  error: string | null;
+  startedAt: number;
+  finishedAt: number | null;
+}
+
+interface RunRow {
+  id: string;
+  user_id: string;
+  user_email: string;
+  instance_host: string;
+  sf_org_id: string | null;
+  sf_user_id: string | null;
+  dataspace: string;
+  source: RunSource;
+  sql_text: string;
+  param_defs: string;
+  params: string;
+  query_id: string | null;
+  status: RunStatus;
+  row_count: number | null;
+  error: string | null;
+  started_at: number;
+  finished_at: number | null;
+}
+
+const fromRow = (r: RunRow): RunRecord => ({
+  id: r.id,
+  userId: r.user_id,
+  userEmail: r.user_email,
+  instanceHost: r.instance_host,
+  sfOrgId: r.sf_org_id,
+  sfUserId: r.sf_user_id,
+  dataspace: r.dataspace,
+  source: r.source,
+  sql: r.sql_text,
+  paramDefs: JSON.parse(r.param_defs) as ParamDef[],
+  params: JSON.parse(r.params) as Record<string, string>,
+  queryId: r.query_id,
+  status: r.status,
+  rowCount: r.row_count,
+  error: r.error,
+  startedAt: r.started_at,
+  finishedAt: r.finished_at,
+});
+
+export interface AuditFilter {
+  email?: string;
+  host?: string;
+  before?: number;
+  limit: number;
+}
+
+export function createStore(db: SqlDatabase) {
+  return {
+    async logRun(r: RunRecord): Promise<void> {
+      await db
+        .prepare(
+          `insert into query_log (id, user_id, user_email, instance_host, sf_org_id, sf_user_id, dataspace, source, sql_text,
+             param_defs, params, query_id, status, row_count, error, started_at, finished_at)
+           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          r.id, r.userId, r.userEmail, r.instanceHost, r.sfOrgId, r.sfUserId, r.dataspace, r.source, r.sql,
+          JSON.stringify(r.paramDefs), JSON.stringify(r.params), r.queryId, r.status, r.rowCount, r.error, r.startedAt, r.finishedAt,
+        )
+        .run();
+    },
+
+    /** Records what Salesforce said about a just-submitted query (or why submitting failed). */
+    async updateRun(id: string, p: { queryId?: string | null; status: RunStatus; rowCount?: number | null; error?: string | null; finishedAt?: number | null }) {
+      await db
+        .prepare(`update query_log set query_id = coalesce(?, query_id), status = ?, row_count = ?, error = ?, finished_at = ? where id = ?`)
+        .bind(p.queryId ?? null, p.status, p.rowCount ?? null, p.error ?? null, p.finishedAt ?? null, id)
+        .run();
+    },
+
+    /** Closes a running entry. Scoped to the user so nobody can rewrite someone else's record. */
+    async finishRun(userId: string, queryId: string, status: RunStatus, rowCount: number | null, at = Date.now()): Promise<void> {
+      await db
+        .prepare(`update query_log set status = ?, row_count = ?, finished_at = ? where user_id = ? and query_id = ? and status = 'running'`)
+        .bind(status, rowCount, at, userId, queryId)
+        .run();
+    },
+
+    async history(userId: string, limit: number): Promise<RunRecord[]> {
+      const { results } = await db
+        .prepare(`select * from query_log where user_id = ? and source = 'editor' and hidden = 0 order by started_at desc limit ?`)
+        .bind(userId, limit)
+        .all<RunRow>();
+      return results.map(fromRow);
+    },
+
+    async hideHistory(userId: string): Promise<void> {
+      await db.prepare(`update query_log set hidden = 1 where user_id = ?`).bind(userId).run();
+    },
+
+    async audit(f: AuditFilter): Promise<RunRecord[]> {
+      const where: string[] = [];
+      const args: (string | number)[] = [];
+      const add = (clause: string, v: string | number) => {
+        where.push(clause);
+        args.push(v);
+      };
+      if (f.email) add('user_email = ?', f.email.toLowerCase());
+      if (f.host) add('instance_host = ?', f.host.toLowerCase());
+      if (f.before) add('started_at < ?', f.before);
+      const { results } = await db
+        .prepare(`select * from query_log ${where.length ? `where ${where.join(' and ')}` : ''} order by started_at desc limit ?`)
+        .bind(...args, f.limit)
+        .all<RunRow>();
+      return results.map(fromRow);
+    },
+
+    async purgeRuns(olderThan: number): Promise<number> {
+      return (await db.prepare(`delete from query_log where started_at < ?`).bind(olderThan).run()).meta.changes;
+    },
+
+    async getState(userId: string, key: string): Promise<{ value: unknown; updatedAt: number } | null> {
+      const r = await db
+        .prepare(`select value, updated_at from user_state where user_id = ? and key = ?`)
+        .bind(userId, key)
+        .first<{ value: string; updated_at: number }>();
+      return r ? { value: JSON.parse(r.value) as unknown, updatedAt: r.updated_at } : null;
+    },
+
+    async putState(userId: string, key: string, json: string, at = Date.now()): Promise<void> {
+      await db
+        .prepare(
+          `insert into user_state (user_id, key, value, updated_at) values (?, ?, ?, ?)
+           on conflict (user_id, key) do update set value = excluded.value, updated_at = excluded.updated_at`,
+        )
+        .bind(userId, key, json, at)
+        .run();
+    },
+
+    async listCredentials(userId: string): Promise<SavedCredential[]> {
+      const { results } = await db
+        .prepare(`select id, label, client_id, secret_enc is not null as has_secret, created_at, last_used_at
+                  from sf_credentials where user_id = ? order by coalesce(last_used_at, created_at) desc`)
+        .bind(userId)
+        .all<{ id: string; label: string; client_id: string; has_secret: number; created_at: number; last_used_at: number | null }>();
+      return results.map((r) => ({
+        id: r.id,
+        label: r.label,
+        clientId: r.client_id,
+        hasSecret: Boolean(r.has_secret),
+        createdAt: r.created_at,
+        lastUsedAt: r.last_used_at,
+      }));
+    },
+
+    async getCredential(userId: string, id: string): Promise<{ clientId: string; secretEnc: string | null } | null> {
+      const r = await db
+        .prepare(`select client_id, secret_enc from sf_credentials where user_id = ? and id = ?`)
+        .bind(userId, id)
+        .first<{ client_id: string; secret_enc: string | null }>();
+      return r ? { clientId: r.client_id, secretEnc: r.secret_enc } : null;
+    },
+
+    async saveCredential(userId: string, c: { id: string; label: string; clientId: string; secretEnc: string | null }, at = Date.now()) {
+      await db
+        .prepare(`insert into sf_credentials (id, user_id, label, client_id, secret_enc, created_at) values (?, ?, ?, ?, ?, ?)`)
+        .bind(c.id, userId, c.label, c.clientId, c.secretEnc, at)
+        .run();
+    },
+
+    async touchCredential(userId: string, id: string, at = Date.now()): Promise<void> {
+      await db.prepare(`update sf_credentials set last_used_at = ? where user_id = ? and id = ?`).bind(at, userId, id).run();
+    },
+
+    async deleteCredential(userId: string, id: string): Promise<boolean> {
+      return (await db.prepare(`delete from sf_credentials where user_id = ? and id = ?`).bind(userId, id).run()).meta.changes > 0;
+    },
+  };
+}
+
+export type Store = ReturnType<typeof createStore>;
+
+export interface SavedCredential {
+  id: string;
+  label: string;
+  clientId: string;
+  hasSecret: boolean;
+  createdAt: number;
+  lastUsedAt: number | null;
+}

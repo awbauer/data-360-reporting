@@ -2,16 +2,20 @@ import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-qu
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
-import { ApiError } from './api';
+import { ApiError, type SessionInfo } from './api';
 import { App } from './App';
 import './styles.css';
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: (error) => {
-      if (error instanceof ApiError && error.code === 'not_connected') {
-        queryClient.setQueryData(['session'], { connected: false, instanceHost: null, mock: false, defaultClientConfigured: true });
-      }
+      if (!(error instanceof ApiError)) return;
+      // Lost the Salesforce connection: back to Connect. Lost the app session: back to sign-in.
+      const patch: Partial<SessionInfo> | null =
+        error.code === 'not_connected' ? { connected: false, instanceHost: null }
+          : error.code === 'unauthenticated' ? { user: null, connected: false, instanceHost: null }
+            : null;
+      if (patch) queryClient.setQueryData<SessionInfo>(['session'], (s) => (s ? { ...s, ...patch } : s));
     },
   }),
   defaultOptions: {

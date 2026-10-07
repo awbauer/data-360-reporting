@@ -1,9 +1,10 @@
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { findParams } from '@shared/sql';
 import { analyzeQuery, withLimit } from '@shared/sqlcheck';
 import type { ParamDef, ParamType } from '@shared/types';
-import { api, type RunInput } from '../api';
+import { api } from '../api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ParamForm } from '../components/ParamForm';
 import { ProposeDialog } from '../components/ProposeDialog';
@@ -13,7 +14,7 @@ import { SqlEditor } from '../components/SqlEditor';
 import { useWorkbench } from '../context';
 import { fmtAgo, fmtMs, fmtNum } from '../lib/format';
 import { formatSql } from '../lib/formatSql';
-import { countCache, emptyTab, history, MAX_TABS, skipLimitWarning, tabStore, type TabData } from '../lib/storage';
+import { countCache, emptyTab, MAX_TABS, normalizeTabs, skipLimitWarning, tabStore, type TabData, type TabStore } from '../lib/storage';
 import { MAX_IN_MEMORY, useQueryRunner } from '../lib/useQueryRunner';
 
 export interface QueryNavState {
@@ -29,10 +30,21 @@ const SAFE_LIMIT = 1000;
 
 // ------------------------------------------------------------------ tab manager
 
+/** Waits briefly for the user's tabs from the server, so edits never race the load. */
 export function QueryPage() {
   const wb = useWorkbench();
+  const user = wb.session.user?.email ?? '';
+  const remote = useQuery({ queryKey: ['state', 'tabs'], queryFn: () => api.getState<TabStore>('tabs'), staleTime: Infinity, retry: 0 });
+  if (remote.isLoading) return <div className="hint">Loading your tabs…</div>;
+  const initial = normalizeTabs(remote.data?.value) ?? tabStore.load(user);
+  return <QueryTabs user={user} initial={initial} />;
+}
+
+function QueryTabs({ user, initial }: { user: string; initial: TabStore }) {
+  const wb = useWorkbench();
+  const qc = useQueryClient();
   const location = useLocation();
-  const [store, setStore] = useState(() => tabStore.load());
+  const [store, setStore] = useState(initial);
   const [autorun, setAutorun] = useState<string | null>(null);
   const handled = useRef<string | null>(null);
 
@@ -59,10 +71,18 @@ export function QueryPage() {
     });
   }, [location, wb]);
 
+  // Keep a browser copy right away and the account copy shortly after typing stops.
   useEffect(() => {
-    const t = setTimeout(() => tabStore.save(store), 300);
-    return () => clearTimeout(t);
-  }, [store]);
+    const local = setTimeout(() => tabStore.save(user, store), 300);
+    const remote = setTimeout(() => {
+      qc.setQueryData(['state', 'tabs'], { value: store, updatedAt: Date.now() });
+      api.putState('tabs', store).catch((e: unknown) => console.warn('Could not save tabs to your account', e));
+    }, 1500);
+    return () => {
+      clearTimeout(local);
+      clearTimeout(remote);
+    };
+  }, [store, user, qc]);
 
   const patch = useCallback((id: string, p: Partial<TabData>) => {
     setStore((s) => ({ ...s, tabs: s.tabs.map((t) => (t.id === id ? { ...t, ...p } : t)) }));
@@ -152,15 +172,8 @@ function QueryTab({ tab, active, autorun, onAutoran, onChange }: TabProps) {
   const names = useMemo(() => findParams(sql), [sql]);
   const paramDefs = useMemo<ParamDef[]>(() => names.map((n) => defs[n] ?? { name: n, type: 'string' }), [names, defs]);
 
-  const onFinished = useCallback(
-    (input: RunInput, s: { rows: number; elapsedMs: number }) =>
-      history.add({
-        id: crypto.randomUUID(), at: new Date().toISOString(), sql: input.sql, dataspace: input.dataspace,
-        paramDefs: input.paramDefs ?? [], params: input.params ?? {}, rows: s.rows, elapsedMs: s.elapsedMs,
-      }),
-    [],
-  );
-  const runner = useQueryRunner(onFinished);
+  // The server records every run (History reads it back), so nothing to store here.
+  const runner = useQueryRunner();
   const { state } = runner;
 
   // Seed a starter query once, when the tab opens empty and metadata arrives. Never again:

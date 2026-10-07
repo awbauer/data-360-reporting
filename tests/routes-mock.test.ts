@@ -11,20 +11,23 @@ import {
 } from '@shared/histogram';
 import { cookieJar, H, mockApp } from './helpers';
 
-const app = mockApp();
+const { app, send, signIn } = mockApp();
 const jar = cookieJar();
-const req = (path: string, init: RequestInit = {}) =>
-  app.request(path, { ...init, headers: { ...(init.headers as Record<string, string>), cookie: jar.header() } });
+const req = (path: string, init: RequestInit = {}) => send(jar, path, init);
 
 beforeAll(async () => {
-  jar.absorb(await app.request('/auth/login'));
+  await signIn(jar, 'demo@example.com', false);
+  await req('/auth/login');
 });
 
 describe('mock mode API', () => {
-  it('rejects unauthenticated API calls', async () => {
+  it('rejects API calls from someone not signed in to the app', async () => {
     const res = await app.request('/api/dataspaces');
     expect(res.status).toBe(401);
-    expect((await res.json()).error).toBe('not_connected');
+    expect((await res.json()).error).toBe('unauthenticated');
+    const login = await app.request('/auth/login');
+    expect(login.status).toBe(302);
+    expect(login.headers.get('location')).toMatch(/^\/\?error=Sign/);
   });
 
   it('reports the session', async () => {
@@ -120,20 +123,21 @@ describe('mock mode API', () => {
   it('logs out', async () => {
     const res = await req('/auth/logout', { method: 'POST', headers: H });
     expect(res.status).toBe(200);
-    jar.absorb(res);
-    expect((await req('/api/dataspaces')).status).toBe(401);
+    const after = await req('/api/dataspaces');
+    expect(after.status).toBe(401);
+    expect((await after.json()).error).toBe('not_connected');
   });
 });
 
 describe('mock mode: extras and histograms', () => {
   const local = mockApp();
   const j = cookieJar();
-  const r = (path: string, init: RequestInit = {}) =>
-    local.request(path, { ...init, headers: { ...(init.headers as Record<string, string>), cookie: j.header() } });
+  const r = (path: string, init: RequestInit = {}) => local.send(j, path, init);
   const run = async (sql: string) => (await r('/api/query', { method: 'POST', headers: H, body: JSON.stringify({ sql }) })).json();
 
   beforeAll(async () => {
-    j.absorb(await local.request('/auth/login'));
+    await local.signIn(j, 'demo@example.com', false);
+    await r('/auth/login');
   });
 
   it('lists data streams and segments', async () => {

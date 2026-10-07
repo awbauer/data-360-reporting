@@ -1,13 +1,16 @@
 // Cloudflare Workers deployment: the built SPA is served as static assets, and the
 // same Hono app that runs on Node handles /api/* and /auth/* in the Worker.
 //
-// Before the first deploy:
-//   npx wrangler secret put SESSION_KEY        # 32+ random chars (openssl rand -hex 32); or add it in
-//                                              # the dashboard with type "Secret". Deploys never overwrite it.
-//   npx wrangler secret put SF_CLIENT_ID       # or put it in "vars" below; it isn't secret
-//   npx wrangler secret put SF_CLIENT_SECRET   # skip this: PKCE without a secret is preferred
-// Then: npm run deploy   (or let a Workers Builds git integration run `npx wrangler deploy`;
-// the "build" step below produces dist/web first)
+// Before the first deploy (dashboard → Settings → Variables and Secrets works too; deploys never overwrite them):
+//   npx wrangler secret put SESSION_KEY            # 32+ random chars (openssl rand -hex 32)
+//   npx wrangler secret put GITHUB_CLIENT_ID       # app sign-in: a GitHub OAuth app and/or a Google client,
+//   npx wrangler secret put GITHUB_CLIENT_SECRET   #   callback https://<host>/api/auth/callback/github (…/google)
+//   (who may sign in is AUTH_ALLOWED_DOMAINS under "vars" below; add AUTH_ALLOWED_EMAILS for individuals)
+//   npx wrangler secret put AUTH_ADMIN_EMAILS      # who can read the audit log (optional)
+//   npx wrangler secret put SF_CLIENT_ID           # optional shared Salesforce app; it isn't secret
+// The D1 database is created on the first deploy (no database_id below) and the Worker applies
+// migrations/ itself on its first request. Then: npm run deploy, or let a Workers Builds git
+// integration run `npx wrangler deploy` (the "build" step below produces dist/web first).
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "data360-workbench",
@@ -31,12 +34,28 @@
     "run_worker_first": ["/api/*", "/auth/*"]
   },
 
+  // Users, sessions, saved credentials, per-user tabs and the query audit log. Salesforce tokens are
+  // NOT stored here. Leaving out database_id lets `wrangler deploy` create the database and write
+  // its id back; to reuse an existing one, add "database_id" from `npx wrangler d1 list`.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "data360-workbench", "migrations_dir": "migrations" }
+  ],
+  // migrations/*.sql are bundled as text so the Worker can apply them (see worker/migrations.ts).
+  "rules": [{ "type": "Text", "globs": ["**/*.sql"], "fallthrough": true }],
+
+  // Daily purge of audit entries older than AUDIT_RETENTION_DAYS (default 180).
+  "triggers": { "crons": ["17 3 * * *"] },
+
   // Keep variables set in the Cloudflare dashboard. Without this, `wrangler deploy` deletes any
   // plaintext variable that isn't listed in "vars" below. (Secrets are never touched by a deploy.)
   "keep_vars": true,
 
   "vars": {
-    "NODE_ENV": "production"
+    "NODE_ENV": "production",
+    // Who may sign in: provider-verified emails at exactly these domains (subdomains don't match).
+    // Kept here, not in the dashboard, so changes go through a pull request. A deploy overwrites
+    // a dashboard value of the same name.
+    "AUTH_ALLOWED_DOMAINS": "publicissapient.com,publicisgroupe.net,publicis.com"
     // APP_BASE_URL defaults to the request's origin, so OAuth callbacks follow whatever
     // hostname you attach. Set it only if you front the Worker with a different public URL.
     // "APP_BASE_URL": "https://workbench.example.com",
