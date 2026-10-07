@@ -2,6 +2,7 @@ import type { BrowserContext } from '@playwright/test';
 import { createAuth } from '../server/auth';
 import { loadConfig } from '../server/config';
 import { openNodeDatabase } from '../server/node-db';
+import { createStore } from '../server/store';
 import { LIVE_SESSION_KEY } from '../playwright.config';
 
 /**
@@ -11,8 +12,8 @@ import { LIVE_SESSION_KEY } from '../playwright.config';
  */
 export async function liveSignIn(context: BrowserContext, base: string, email: string) {
   const config = loadConfig({ APP_BASE_URL: base, SESSION_KEY: LIVE_SESSION_KEY, AUTH_ALLOWED_DOMAINS: 'example.com', DATABASE_PATH: process.env.D360_E2E_DB });
-  const { raw } = openNodeDatabase(config.databasePath);
-  const auth = createAuth(config, raw, { passwordSignIn: true });
+  const { raw, db } = openNodeDatabase(config.databasePath);
+  const auth = createAuth(config, raw, { store: createStore(db), passwordSignIn: true });
   const ctx = await auth.$context;
   const password = 'e2e-password-not-secret';
   if (!(await ctx.internalAdapter.findUserByEmail(email))) {

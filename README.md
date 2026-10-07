@@ -7,7 +7,11 @@ A web workbench for Salesforce **Data 360** (formerly Data Cloud). Sign in to th
 - **Query**: a SQL editor with autocomplete from your metadata, `:named` parameters, **multiple tabs**, **Format**, cancel, paging, CSV export and a **Table / Chart** toggle (bar or line of one measure against one dimension). Queries with no `LIMIT` ask first, showing cached row counts for the objects they read.
 - **Library**: a shared set of saved queries that lives in this repository (`queries/`) and changes through pull requests.
 - **History**: your recent editor runs, on any device you sign in from.
-- **Audit** (admins): every query run through the workbench, by whom, against which org, with its outcome. Downloadable as CSV.
+- **Admin** (people in `AUTH_ADMIN_EMAILS`):
+  - **Users**: everyone who has signed in, with provider, last sign-in, active sessions and query count. Open one to see their sessions and sign-in history, sign them out everywhere, or **block** them. Blocking ends their sessions at once and refuses future sign-ins, whatever the allowlist says. Admins can't block themselves or another admin.
+  - **Sign-ins**: every successful sign-in, and every attempt the allowlist or a block turned away, with IP and browser.
+  - **Queries**: every query run through the workbench, by whom, against which org, with its outcome. Downloadable as CSV.
+  - **Admin log**: who blocked, unblocked or signed out whom.
 
 The Salesforce connection is user-initiated: the app never redirects to Salesforce on load.
 
@@ -131,7 +135,9 @@ Security notes:
 
 Everything runs as the person who signed in. Sign-in is the OAuth authorization-code flow, so the access token is that user's, and the server uses only that token for Connect API calls (there is no integration user or client-credentials flow). Salesforce documents the `cdp_query_api` scope as running SQL "on behalf of the user", and the query endpoints require that user to have permission to the data space. So data access follows the user's own permissions, and the user is the one Salesforce sees.
 
-The workbench also keeps its own record: every query (from the editor, Explorer and Overview) is written to `query_log` **before** it is sent to Salesforce, with the workbench user's email, the org host, the Salesforce org and user ids from their token, the data space, SQL, parameter values, status, row count and timing. If that write fails, the query does not run. Parameter values are stored as typed, so treat the audit log as sensitive. Users see their own editor runs under History ("Clear" hides them there; the audit keeps them). Admins see everything under Audit and can download it as CSV.
+The workbench also keeps its own record: every query (from the editor, Explorer and Overview) is written to `query_log` **before** it is sent to Salesforce, with the workbench user's email, the org host, the Salesforce org and user ids from their token, the data space, SQL, parameter values, status, row count and timing. If that write fails, the query does not run. Parameter values are stored as typed, so treat the audit log as sensitive. Users see their own editor runs under History ("Clear" hides them there; the audit keeps them). Admins see everything under Admin → Queries and can download it as CSV.
+
+Sign-ins are recorded too (`login_event`): successes, and attempts refused by the allowlist or a block, with IP (from `CF-Connecting-IP` on Cloudflare, otherwise the first `X-Forwarded-For` hop, which a client can forge when Node isn't behind a proxy) and user agent. Both logs are purged after `AUDIT_RETENTION_DAYS`. Admin actions (`admin_action`) are not purged.
 
 ## Cost awareness
 

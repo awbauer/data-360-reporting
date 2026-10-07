@@ -183,7 +183,8 @@ describe('query audit log and history', () => {
     const { t, req } = await connected();
     await req('/api/query', json({ sql: 'SELECT 1 AS a' }));
     expect(await purgeExpired(t.config, t.store, Date.now())).toBe(0);
-    expect(await purgeExpired(t.config, t.store, Date.now() + (t.config.auditRetentionDays + 1) * 86_400_000)).toBe(1);
+    // One query and one sign-in event.
+    expect(await purgeExpired(t.config, t.store, Date.now() + (t.config.auditRetentionDays + 1) * 86_400_000)).toBe(2);
   });
 });
 
@@ -229,7 +230,7 @@ describe('configuration and plumbing', () => {
     const { raw } = openNodeDatabase(':memory:');
     expect(migrateNodeSqlite(raw, loadMigrations())).toEqual([]);
     const names = (raw.prepare('select name from d1_migrations order by id').all() as { name: string }[]).map((r) => r.name);
-    expect(names).toEqual(['0001_auth.sql', '0002_app.sql']);
+    expect(names).toEqual(['0001_auth.sql', '0002_app.sql', '0003_admin.sql']);
   });
 
   it('bundles every migration into the Worker', async () => {
@@ -241,7 +242,7 @@ describe('configuration and plumbing', () => {
     const { DatabaseSync } = (await import('node:module')).createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
     const viaD1 = new DatabaseSync(':memory:');
     const d1 = fromNodeSqlite(viaD1 as never);
-    expect(await migrateD1(d1, loadMigrations())).toEqual(['0001_auth.sql', '0002_app.sql']);
+    expect(await migrateD1(d1, loadMigrations())).toEqual(['0001_auth.sql', '0002_app.sql', '0003_admin.sql']);
     expect(await migrateD1(d1, loadMigrations())).toEqual([]);
     const schema = (db: InstanceType<typeof DatabaseSync>) =>
       (db.prepare("select name, type from sqlite_master where name not like 'sqlite_%' order by name").all() as unknown[]);

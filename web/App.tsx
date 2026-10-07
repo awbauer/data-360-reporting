@@ -5,7 +5,7 @@ import { api, type SessionInfo } from './api';
 import { UserMenu } from './components/UserMenu';
 import { WorkbenchProvider, useWorkbench } from './context';
 import { forgetLegacyData } from './lib/storage';
-import { AuditPage } from './pages/Audit';
+import { AdminPage } from './pages/Admin';
 import { Connect } from './pages/Connect';
 import { Explorer } from './pages/Explorer';
 import { HistoryPage } from './pages/History';
@@ -23,7 +23,7 @@ export function App() {
   if (session.error || !session.data) return <div className="hint">Could not reach the server: {session.error?.message}</div>;
   const s = session.data;
   if (!s.user) return <SignIn session={s} />;
-  if (!s.user.allowed) return <NotAllowed session={s} />;
+  if (!s.user.allowed || s.user.blocked) return <NotAllowed session={s} />;
   if (!s.connected) return <Connect session={s} />;
   return (
     <WorkbenchProvider session={s}>
@@ -56,7 +56,7 @@ function Shell() {
           <NavLink to="/query">Query</NavLink>
           <NavLink to="/library">Library</NavLink>
           <NavLink to="/history">History</NavLink>
-          {wb.session.user?.admin && <NavLink to="/audit">Audit</NavLink>}
+          {wb.session.user?.admin && <NavLink to="/admin">Admin</NavLink>}
         </nav>
         <div className="grow" />
         <label className="row small" style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -81,7 +81,8 @@ function Shell() {
         <Route path="/query" element={<main className="main flush"><Suspense fallback={<div className="hint">Loading editor…</div>}><QueryPage /></Suspense></main>} />
         <Route path="/library" element={<main className="main"><LibraryPage /></main>} />
         <Route path="/history" element={<main className="main"><HistoryPage /></main>} />
-        {wb.session.user?.admin && <Route path="/audit" element={<main className="main"><AuditPage /></main>} />}
+        {wb.session.user?.admin && <Route path="/admin/*" element={<main className="main"><AdminPage /></main>} />}
+        {wb.session.user?.admin && <Route path="/audit" element={<Navigate to="/admin/queries" replace />} />}
         <Route path="*" element={<Navigate to="/overview" replace />} />
       </Routes>
     </div>

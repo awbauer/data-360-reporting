@@ -37,6 +37,8 @@ export interface AppUserInfo {
   image: string | null;
   allowed: boolean;
   admin: boolean;
+  /** An admin blocked this user: everything but sign-out is refused. */
+  blocked: boolean;
 }
 
 export type Provider = 'github' | 'google';
@@ -85,6 +87,62 @@ export interface HistoryItem {
   rows: number | null;
   elapsedMs: number | null;
   error: string | null;
+}
+
+export interface AdminBlock {
+  reason: string | null;
+  blockedBy: string;
+  blockedAt: number;
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  name: string;
+  createdAt: string;
+  providers: string[];
+  lastSignInAt: number | null;
+  activeSessions: number;
+  queries: number;
+  lastQueryAt: number | null;
+  block: AdminBlock | null;
+}
+
+export interface LoginEvent {
+  id: string;
+  userId: string | null;
+  email: string;
+  outcome: 'success' | 'denied' | 'blocked';
+  method: string | null;
+  ip: string | null;
+  userAgent: string | null;
+  reason: string | null;
+  at: number;
+}
+
+export interface AdminSession {
+  id: string;
+  createdAt: string;
+  expiresAt: string;
+  ip: string | null;
+  userAgent: string | null;
+}
+
+export interface AdminUserDetail {
+  user: { id: string; email: string; name: string; createdAt: string; admin: boolean };
+  block: AdminBlock | null;
+  sessions: AdminSession[];
+  logins: LoginEvent[];
+}
+
+export interface AdminAction {
+  id: string;
+  adminEmail: string;
+  action: string;
+  targetUserId: string | null;
+  targetEmail: string | null;
+  detail: string | null;
+  at: number;
 }
 
 export interface AuditEntry {
@@ -159,6 +217,19 @@ export const api = {
   },
   auditCsvUrl: (f: { email?: string; host?: string }) =>
     `/api/audit?${new URLSearchParams({ ...Object.fromEntries(Object.entries(f).filter(([, v]) => v)), format: 'csv', limit: '50000' })}`,
+  admin: {
+    users: () => request<AdminUser[]>('/api/admin/users'),
+    user: (id: string) => request<AdminUserDetail>(`/api/admin/users/${enc(id)}`),
+    block: (id: string, reason: string) => request<{ ok: true; revoked: number }>(`/api/admin/users/${enc(id)}/block`, { method: 'POST', json: { reason } }),
+    unblock: (id: string) => request<{ ok: true }>(`/api/admin/users/${enc(id)}/block`, { method: 'DELETE' }),
+    revoke: (id: string, sessionId?: string) =>
+      request<{ ok: true; revoked: number }>(`/api/admin/users/${enc(id)}/revoke`, { method: 'POST', json: sessionId ? { sessionId } : {} }),
+    logins: (f: { outcome?: string; email?: string; before?: number }) => {
+      const q = new URLSearchParams(Object.entries(f).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)]));
+      return request<LoginEvent[]>(`/api/admin/logins?${q}`);
+    },
+    actions: () => request<AdminAction[]>('/api/admin/actions'),
+  },
   getState: <T>(key: 'tabs') => request<{ value: T; updatedAt: number } | null>(`/api/state/${key}`),
   putState: (key: 'tabs', value: unknown) => request<{ ok: true }>(`/api/state/${key}`, { method: 'PUT', json: { value } }),
   dataspaces: () => request<DataSpace[]>('/api/dataspaces'),

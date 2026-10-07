@@ -15,7 +15,7 @@ async function setSql(page: Page, sql: string) {
 
 test.describe.configure({ mode: 'serial' });
 
-test('sign in → connect → explore → query → library → audit → disconnect → sign out', async ({ page }) => {
+test('sign in → connect → explore → query → library → admin → disconnect → sign out', async ({ page, browser }) => {
   // App sign-in comes first; in mock mode a local demo user stands in for GitHub/Google.
   await page.goto('/');
   await page.getByRole('button', { name: 'Continue as demo user' }).click();
@@ -210,13 +210,37 @@ test('sign in → connect → explore → query → library → audit → discon
   await expect(page.locator('pre.sql').first()).toContainText('ssot__CreatedDate__c');
   await expect(page.locator('pre.sql', { hasText: 'COUNT(*) AS "rows"' })).toHaveCount(0); // row counts aren't editor runs
 
-  // Audit (demo user is an admin here): every run, including Overview/Explorer ones
-  await page.getByRole('link', { name: 'Audit' }).click();
+  // Admin (demo user is an admin here). Queries: every run, including Overview/Explorer ones
+  await page.getByRole('link', { name: 'Admin' }).click();
+  await page.getByRole('navigation', { name: 'Admin' }).getByRole('link', { name: 'Queries' }).click();
   await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible();
   await expect(page.locator('table.t tbody tr').first()).toContainText('demo@example.com');
   await expect(page.locator('table.t tbody tr', { hasText: 'overview' }).first()).toBeVisible();
   await expect(page.locator('table.t tbody tr', { hasText: 'explorer' }).first()).toBeVisible();
   await expect(page.locator('table.t tbody tr', { hasText: 'failed' }).first()).toBeVisible();
+
+  // Users: block someone, and their open session stops working at once
+  const other = await browser.newContext({ baseURL: 'http://localhost:4173' });
+  const creds = { email: 'colleague@example.com', password: 'colleague-password', name: 'Colleague' };
+  expect((await other.request.post('/api/auth/sign-up/email', { data: creds, headers: { origin: 'http://localhost:4173' } })).ok()).toBe(true);
+  expect((await other.request.get('/api/history')).status()).toBe(200);
+  await page.getByRole('navigation', { name: 'Admin' }).getByRole('link', { name: 'Users' }).click();
+  await page.getByRole('link', { name: 'colleague@example.com' }).click();
+  await expect(page.getByRole('heading', { name: 'Active sessions (1)' })).toBeVisible();
+  await page.getByRole('button', { name: 'Block…' }).click();
+  await page.getByLabel(/Reason/).fill('left the project');
+  await page.getByRole('dialog').getByRole('button', { name: 'Block', exact: true }).click();
+  await expect(page.getByText(/Blocked by demo@example.com .*left the project/)).toBeVisible();
+  expect((await other.request.get('/api/history')).status()).toBe(401);
+  expect((await other.request.post('/api/auth/sign-in/email', { data: creds, headers: { origin: 'http://localhost:4173' } })).ok()).toBe(false);
+  await page.reload(); // the refused sign-in happened elsewhere
+  await expect(page.locator('table.t tbody tr', { hasText: 'blocked' }).first()).toContainText('left the project');
+  await page.getByRole('navigation', { name: 'Admin' }).getByRole('link', { name: 'Admin log' }).click();
+  await expect(page.locator('table.t tbody tr').first()).toContainText('block');
+  await page.getByRole('navigation', { name: 'Admin' }).getByRole('link', { name: 'Sign-ins' }).click();
+  await page.getByLabel('Outcome').selectOption('blocked');
+  await expect(page.locator('table.t tbody tr').first()).toContainText('colleague@example.com');
+  await other.close();
 
   // Data space switch re-reads metadata
   await page.getByRole('link', { name: 'Overview' }).click();

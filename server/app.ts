@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { secureHeaders } from 'hono/secure-headers';
 import { z, ZodError } from 'zod';
-import { isAdmin, isAllowed, type AppUser, type Auth } from './auth';
+import { isAdmin, isAllowed, withSignInEvents, type AppUser, type Auth } from './auth';
 import type { Config } from './config';
 import { pkceChallenge, randomToken, seal, unseal } from './crypto';
 import { createConnectClient, type SessionHolder } from './data360/client';
@@ -10,6 +10,8 @@ import { UpstreamError, type Data360Client } from './data360/types';
 import { assertAllowedOrigin, HostNotAllowedError } from './hosts';
 import { authorizeUrl, exchangeCode, OAuthError, revokeToken, type FetchLike, type OAuthTx, type Session } from './oauth';
 import type { RunRecord, Store } from './store';
+import type { Block } from './admin-store';
+import { registerAdminRoutes } from './admin-routes';
 import { toSqlParameters } from '../shared/sql';
 import type { CellValue, ParamDef, QueryResponse } from '../shared/types';
 
@@ -22,7 +24,7 @@ export interface AppDeps {
   store: Store;
 }
 
-type Env = { Variables: { user?: AppUser; session?: Session; holder?: SessionHolder; client?: Data360Client } };
+type Env = { Variables: { user?: AppUser; block?: Block | null; session?: Session; holder?: SessionHolder; client?: Data360Client } };
 
 const SESSION_COOKIE = 'd360_session';
 const TX_COOKIE = 'd360_oauth';
@@ -98,7 +100,7 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
   );
 
   // App sign-in (Better Auth). It checks the Origin of its own POSTs against trustedOrigins.
-  app.on(['GET', 'POST'], '/api/auth/*', (c) => auth.handler(c.req.raw));
+  app.on(['GET', 'POST'], '/api/auth/*', (c) => withSignInEvents(store, () => auth.handler(c.req.raw)));
 
   // CSRF: state-changing requests must carry a custom header, which cross-site forms can't set.
   app.use('*', async (c, next) => {
@@ -112,7 +114,11 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
   app.use('*', async (c, next) => {
     const { headers, response } = await auth.api.getSession({ headers: c.req.raw.headers, returnHeaders: true });
     const user = response?.user;
-    if (user) {
+    // The session must still exist (an admin may have revoked it, which Better Auth's cookie cache
+    // wouldn't notice for minutes), and its user must not be blocked. One read covers both.
+    const state = user ? await store.sessionState(response.session.token, user.id) : null;
+    if (user && state?.live) {
+      c.set('block', state.block);
       const u: AppUser = { id: user.id, email: user.email.toLowerCase(), name: user.name, emailVerified: user.emailVerified, image: user.image ?? null };
       c.set('user', u);
       const token = getCookie(c, SESSION_COOKIE);
@@ -135,7 +141,12 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
     const s = c.get('session');
     const u = c.get('user');
     return c.json({
-      user: u ? { email: u.email, name: u.name, image: u.image ?? null, allowed: isAllowed(config, u), admin: isAdmin(config, u) } : null,
+      user: u
+        ? {
+            email: u.email, name: u.name, image: u.image ?? null, allowed: isAllowed(config, u), admin: isAdmin(config, u),
+            blocked: Boolean(c.get('block')),
+          }
+        : null,
       providers: [...(config.providers.github ? ['github'] : []), ...(config.providers.google ? ['google'] : [])],
       connected: Boolean(s),
       instanceHost: s ? new URL(s.instanceUrl).host : null,
@@ -147,10 +158,12 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
   // Everything below needs a signed-in user on the allowlist.
   const gate = (redirect: boolean) => async (c: Context<Env>, next: () => Promise<void>) => {
     const u = c.get('user');
-    if (!u || !isAllowed(config, u)) {
-      const [code, message] = u
-        ? (['not_allowed', `${u.email} is not allowed to use this app.`] as const)
-        : (['unauthenticated', 'Sign in first.'] as const);
+    if (!u || !isAllowed(config, u) || c.get('block')) {
+      const [code, message] = !u
+        ? (['unauthenticated', 'Sign in first.'] as const)
+        : c.get('block')
+          ? (['blocked', 'Your access to this workbench has been suspended. Contact an administrator.'] as const)
+          : (['not_allowed', `${u.email} is not allowed to use this app.`] as const);
       return redirect ? c.redirect(`/?error=${encodeURIComponent(message)}`) : c.json({ error: code, message }, u ? 403 : 401);
     }
     await next();
@@ -280,6 +293,8 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
     await store.hideHistory(c.get('user')!.id);
     return c.json({ ok: true });
   });
+
+  registerAdminRoutes(app, { config, store });
 
   app.get('/api/audit', async (c) => {
     if (!isAdmin(config, c.get('user')!)) return c.json({ error: 'forbidden', message: 'Admins only' }, 403);
@@ -540,7 +555,8 @@ function toHistoryItem(r: RunRecord): HistoryItem {
 
 /** Deletes audit entries past the retention window. Run daily (Worker cron / Node timer). */
 export async function purgeExpired(config: Config, store: Store, now = Date.now()): Promise<number> {
-  return store.purgeRuns(now - config.auditRetentionDays * 86_400_000);
+  const cutoff = now - config.auditRetentionDays * 86_400_000;
+  return (await store.purgeRuns(cutoff)) + (await store.purgeLogins(cutoff));
 }
 
 // ------------------------------------------------------------------- csv

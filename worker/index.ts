@@ -42,7 +42,8 @@ export default {
         return new Response('Database migration failed; see the Worker logs.', { status: 500 });
       }
       const config = configFrom(env, new URL(request.url).origin);
-      app = createApp({ config, auth: createAuth(config, env.DB), store: createStore(env.DB), fetch: (url, init) => fetch(url, init) });
+      const store = createStore(env.DB);
+      app = createApp({ config, auth: createAuth(config, env.DB, { store }), store, fetch: (url, init) => fetch(url, init) });
     }
     return app.fetch(request, env);
   },
