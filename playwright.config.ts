@@ -32,7 +32,7 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
-      command: `PORT=${LIVE_PORT} APP_BASE_URL=http://localhost:${LIVE_PORT} SESSION_KEY=${LIVE_SESSION_KEY} DATABASE_PATH=${process.env.D360_E2E_DB} AUTH_ALLOWED_DOMAINS=example.com tsx server/entry-node.ts`,
+      command: `PORT=${LIVE_PORT} APP_BASE_URL=http://localhost:${LIVE_PORT} SESSION_KEY=${LIVE_SESSION_KEY} DATABASE_PATH=${process.env.D360_E2E_DB} AUTH_ALLOWED_DOMAINS=example.com SF_AUTHORIZE_PREFLIGHT=0 tsx server/entry-node.ts`,
       url: `http://localhost:${LIVE_PORT}/api/session`,
       reuseExistingServer: false,
       timeout: 30_000,
