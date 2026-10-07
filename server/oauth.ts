@@ -66,6 +66,41 @@ async function tokenRequest(
   return json;
 }
 
+/**
+ * Salesforce answers a bad authorize request (unknown consumer key, unregistered callback URL)
+ * with a bare 400 whose body is `error=…&error_description=…` and no Content-Type. Browsers can't
+ * render that, so the user sees a "download 'authorize'?" prompt (iOS Safari) or a blank page.
+ * Asking first, from the server, turns it into a message. A valid request is a 302 to the login
+ * page. Anything unexpected (timeout, network, other status) lets the sign-in proceed.
+ */
+export async function preflightAuthorize(
+  config: Config,
+  fetchFn: FetchLike,
+  url: string,
+  loginHost: string,
+): Promise<string | null> {
+  let res: Response;
+  try {
+    res = await fetchFn(url, { redirect: 'manual', headers: { accept: 'text/html' }, signal: AbortSignal.timeout(5000) });
+  } catch {
+    return null;
+  }
+  if (res.status !== 400) return null;
+  const text = (await res.text().catch(() => '')).trim();
+  if (!text.startsWith('error=')) return null;
+  const q = new URLSearchParams(text);
+  const code = q.get('error') ?? 'unknown_error';
+  const detail = q.get('error_description');
+  const host = new URL(loginHost).host;
+  if (code === 'invalid_client_id') {
+    return `Salesforce at ${host} doesn't recognise that consumer key. Check it's the key of an External Client App (or Connected App) in that org, that the app is enabled, and that you copied the whole key.`;
+  }
+  if (code === 'redirect_uri_mismatch') {
+    return `Salesforce rejected the callback URL. Add ${config.appBaseUrl}/auth/callback as a callback URL on the app's OAuth settings, then try again.`;
+  }
+  return `Salesforce rejected the sign-in request (${code}${detail ? `: ${detail}` : ''}).`;
+}
+
 export async function exchangeCode(
   config: Config,
   fetchFn: FetchLike,

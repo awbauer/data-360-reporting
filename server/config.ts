@@ -22,6 +22,8 @@ const schema = z.object({
   FIRST_CHUNK_ROWS: z.coerce.number().int().positive().default(1000),
   MAX_EXPORT_ROWS: z.coerce.number().int().positive().default(100_000),
   DATA360_MOCK: bool,
+  /** Ask Salesforce to vet the sign-in request first, so a rejection can be shown instead of downloaded. */
+  SF_AUTHORIZE_PREFLIGHT: z.enum(['1', '0', 'true', 'false', '']).optional().transform((v) => v !== '0' && v !== 'false'),
   // App sign-in (Better Auth). Users and sessions live in D1 (Workers) or SQLite (Node).
   BETTER_AUTH_SECRET: z.string().min(32).optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
@@ -54,6 +56,7 @@ export interface Config {
   firstChunkRows: number;
   maxExportRows: number;
   mock: boolean;
+  authorizePreflight: boolean;
   /** Better Auth's signing key; derived from SESSION_KEY unless set explicitly. */
   authSecret: string;
   providers: { github?: OAuthApp; google?: OAuthApp };
@@ -109,6 +112,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     firstChunkRows: e.FIRST_CHUNK_ROWS,
     maxExportRows: e.MAX_EXPORT_ROWS,
     mock: e.DATA360_MOCK,
+    authorizePreflight: e.SF_AUTHORIZE_PREFLIGHT,
     // One secret to manage: a separate, labelled key is derived from SESSION_KEY.
     authSecret: e.BETTER_AUTH_SECRET ?? createHash('sha256').update(`better-auth:${sessionKey}`).digest('hex'),
     providers,

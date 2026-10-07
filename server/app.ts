@@ -8,7 +8,7 @@ import { pkceChallenge, randomToken, seal, unseal } from './crypto';
 import { createConnectClient, type SessionHolder } from './data360/client';
 import { UpstreamError, type Data360Client } from './data360/types';
 import { assertAllowedOrigin, HostNotAllowedError } from './hosts';
-import { authorizeUrl, exchangeCode, OAuthError, revokeToken, type FetchLike, type OAuthTx, type Session } from './oauth';
+import { authorizeUrl, exchangeCode, OAuthError, preflightAuthorize, revokeToken, type FetchLike, type OAuthTx, type Session } from './oauth';
 import { maskClientId, type RunRecord, type Store } from './store';
 import type { Block } from './admin-store';
 import { registerAdminRoutes } from './admin-routes';
@@ -223,8 +223,13 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
         clientId,
         ...(cred?.clientSecret ? { clientSecret: cred.clientSecret } : {}),
       };
+      const url = authorizeUrl(config, tx, await pkceChallenge(verifier));
+      if (config.authorizePreflight) {
+        const rejected = await preflightAuthorize(config, fetchFn, url, loginHost);
+        if (rejected) return fail(rejected);
+      }
       setCookie(c, TX_COOKIE, await seal(config.sessionKey, tx, TX_TTL, P.tx(user)), { ...cookieOpts, maxAge: TX_TTL });
-      return c.redirect(authorizeUrl(config, tx, await pkceChallenge(verifier)));
+      return c.redirect(url);
     } catch (e) {
       return fail(e instanceof HostNotAllowedError ? e.message : 'Could not start login');
     }

@@ -58,6 +58,8 @@ Only if your org requires a secret for the web-server flow: set `SF_CLIENT_SECRE
 - With **Save this connection to my account**, they are stored in the database under a name (say "Acme sandbox") together with where they sign in (Production, Sandbox or the My Domain), so a consultant can keep one per client org and connect with one click from any device. The page shows only a masked key (`3MVG9A…x7Qk`); the full key never goes back to the browser. Connections saved before the sign-in host was stored ask for it once. The secret is AES-256-GCM encrypted with `SESSION_KEY` and bound to the owning user and row, so neither a database dump nor a copied row reveals it. Saved credentials are listed without secrets and can be deleted from the Connect screen. Rotating `SESSION_KEY` makes saved secrets unreadable (the app says so); users re-enter them.
 - Without a secret (preferred) the app signs in with PKCE alone. The server's own `SF_CLIENT_SECRET` is never sent with a user-supplied key.
 
+**If the browser offers to download a file called `authorize`**, Salesforce rejected the sign-in request with a plain-text error that browsers can't display (iOS Safari offers a download). The app now asks Salesforce first and shows the reason instead, usually one of: the consumer key isn't recognised in that org (wrong org, app not enabled, key truncated), or `https://<your-host>/auth/callback` isn't registered as a callback URL on the app.
+
 ### Verify against your org
 
 I could not reach a live Data 360 org while building this, so the adapter is built from the published OpenAPI spec (v68.0) and tested against its examples and a mock. Before relying on it, run the smoke test on your machine against a **sandbox**:
@@ -94,6 +96,7 @@ The lineage and definition cards include a **Raw API response** toggle so you ca
 | `SF_CLIENT_SECRET` | none | Only if your app requires a secret. PKCE without a secret is preferred. |
 | `SF_LOGIN_URL` | `https://login.salesforce.com` | Login host for the "Production" option. |
 | `SF_SCOPES` | `api refresh_token cdp_query_api cdp_profile_api` | Requested OAuth scopes. |
+| `SF_AUTHORIZE_PREFLIGHT` | `1` | Before sending someone to Salesforce, ask it whether the consumer key and callback URL are acceptable, and show its reason on the Connect page if not. Set `0` to skip (tests do). |
 | `SF_API_VERSION` | `v65.0` | Connect REST API version (needs ≥ v63.0 for `query-sql`). |
 | `ALLOWED_SF_HOST_SUFFIXES` | `.salesforce.com,.force.com` | Outbound hosts the server may call. |
 | `QUERY_WORKLOAD_NAME` | `data360-workbench` | Sent as `workloadName` so Salesforce support can trace queries. |

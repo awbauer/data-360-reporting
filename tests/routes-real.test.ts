@@ -29,6 +29,9 @@ const tokenOk = (over: Record<string, unknown> = {}) =>
 
 type App = ReturnType<typeof realApp>;
 
+/** The sign-in preflight also calls out, so pick the token requests specifically. */
+const tokenCalls = (calls: Call[]) => calls.filter((c) => c.url.endsWith('/services/oauth2/token'));
+
 /** POST /auth/credentials, returning the app, the cookie jar holding the credentials cookie, and the JSON reply. */
 async function withCredentials(fetchFn: FetchLike, body: Record<string, unknown>) {
   const app = realApp(fetchFn);
@@ -96,7 +99,7 @@ describe('OAuth', () => {
     const { fetchFn, calls } = fakeSalesforce((c) => (c.url.endsWith('/services/oauth2/token') ? tokenOk() : undefined));
     const { cb, req, jar } = await connect(fetchFn);
     expect(cb.headers.get('location')).toBe('/');
-    const body = new URLSearchParams(calls[0]!.body);
+    const body = new URLSearchParams(tokenCalls(calls)[0]!.body);
     expect(body.get('grant_type')).toBe('authorization_code');
     expect(body.get('code')).toBe('CODE');
     expect(body.get('code_verifier')).toMatch(/^[\w-]{40,}$/);
@@ -109,7 +112,7 @@ describe('OAuth', () => {
     const { fetchFn, calls } = fakeSalesforce((c) => (c.url.endsWith('/services/oauth2/token') ? tokenOk() : undefined));
     const { app, jar } = await withCredentials(fetchFn, { clientId: 'OTHERKEY1234567890' });
     await finishLogin(app, jar);
-    const body = new URLSearchParams(calls[0]!.body);
+    const body = new URLSearchParams(tokenCalls(calls)[0]!.body);
     expect(body.get('client_id')).toBe('OTHERKEY1234567890');
     expect(body.has('client_secret')).toBe(false);
   });
@@ -125,7 +128,7 @@ describe('OAuth', () => {
     expect(prepare).toEqual({ clientIdHint: 'USERKE…5678', hasSecret: true });
     const { cb } = await finishLogin(app, jar);
     expect(cb.headers.get('location')).toBe('/');
-    expect(new URLSearchParams(calls[0]!.body).get('client_secret')).toBe('user-secret-value');
+    expect(new URLSearchParams(tokenCalls(calls)[0]!.body).get('client_secret')).toBe('user-secret-value');
     // Nothing readable in any cookie we handed out.
     expect(jar.header()).not.toContain('user-secret-value');
     await app.request('/api/dataspaces', { headers: { cookie: jar.header() } }); // 401 → refresh
@@ -160,7 +163,7 @@ describe('OAuth', () => {
     jar.absorb(res);
     expect(await res.json()).toEqual({ clientIdHint: 'USERKE…5678', hasSecret: true, loginHost: 'https://login.salesforce.com', savedId });
     await finishLogin(app, jar);
-    expect(new URLSearchParams(calls[0]!.body).get('client_secret')).toBe('user-secret-value');
+    expect(new URLSearchParams(tokenCalls(calls)[0]!.body).get('client_secret')).toBe('user-secret-value');
   });
 
   it('remembers where a saved connection signs in, and ignores the page choice when it is used', async () => {
@@ -231,7 +234,7 @@ describe('OAuth', () => {
     expect(bad.headers.get('location')).toMatch(/^\/\?error=/);
     const none = await app.request('/auth/callback?code=C&state=WRONG');
     expect(none.headers.get('location')).toMatch(/^\/\?error=/);
-    expect(calls).toHaveLength(0);
+    expect(tokenCalls(calls)).toHaveLength(0);
   });
 
   it('rejects an instance_url outside the allowlist', async () => {
@@ -387,7 +390,7 @@ describe('Connect API client', () => {
     const { fetchFn, calls } = fakeSalesforce((c) => {
       if (c.url.endsWith('/services/oauth2/token') && c.body.includes('refresh_token')) return json({ access_token: 'AT2', instance_url: INSTANCE });
       if (c.url.includes('/data-spaces')) return c.headers.authorization === 'Bearer AT2' ? json({ dataSpaces: [] }) : json([{ errorCode: 'INVALID_SESSION_ID' }], 401);
-      n++;
+      if (c.url.endsWith('/services/oauth2/token')) n++; // the one code exchange
       return base(c);
     });
     const { req, jar } = await connect(fetchFn);
@@ -435,5 +438,70 @@ describe('Connect API client', () => {
     expect(res.status).toBe(200);
     expect(calls.at(-1)!.url).toBe('https://login.salesforce.com/services/oauth2/revoke');
     expect(new URLSearchParams(calls.at(-1)!.body).get('token')).toBe('RT1');
+  });
+});
+
+describe('sign-in preflight', () => {
+  const authorize = (c: Call) => c.url.includes('/services/oauth2/authorize');
+  const rejection = (error: string, description = '') =>
+    new Response(`error=${error}${description ? `&error_description=${encodeURIComponent(description)}` : ''}`, { status: 400 });
+  const login = async (fetchFn: FetchLike, query = '', over: Record<string, string> = {}) => {
+    const app = realApp(fetchFn, over);
+    const res = await app.request(`/auth/login${query}`);
+    return { res, location: res.headers.get('location') ?? '', setCookie: res.headers.getSetCookie().join('\n') };
+  };
+
+  it("shows Salesforce's reason when it rejects the consumer key, instead of sending the browser there", async () => {
+    const { fetchFn, calls } = fakeSalesforce((c) => (authorize(c) ? rejection('invalid_client_id', 'client identifier invalid') : undefined));
+    const { location, setCookie } = await login(fetchFn);
+    expect(location).toMatch(/^\/\?error=/);
+    expect(decodeURIComponent(location)).toMatch(/login\.salesforce\.com doesn't recognise that consumer key/);
+    expect(setCookie).not.toMatch(/d360_oauth/); // no sign-in transaction was started
+    const asked = calls.find(authorize)!;
+    expect(asked.url).toContain('code_challenge_method=S256');
+  });
+
+  it('names the exact callback URL to register when it is not allowed', async () => {
+    const { fetchFn } = fakeSalesforce((c) => (authorize(c) ? rejection('redirect_uri_mismatch', 'redirect_uri must match configuration') : undefined));
+    const { location } = await login(fetchFn);
+    expect(decodeURIComponent(location)).toContain('Add https://wb.example.com/auth/callback as a callback URL');
+  });
+
+  it('passes other rejections through with their code and description', async () => {
+    const { fetchFn } = fakeSalesforce((c) => (authorize(c) ? rejection('invalid_request', 'something odd') : undefined));
+    expect(decodeURIComponent((await login(fetchFn)).location)).toContain('(invalid_request: something odd)');
+  });
+
+  it('asks the host the user chose, so a My Domain key is checked against its own org', async () => {
+    const { fetchFn, calls } = fakeSalesforce((c) => (authorize(c) ? rejection('invalid_client_id') : undefined));
+    const { location } = await login(fetchFn, '?env=custom&domain=acme.my.salesforce.com');
+    expect(calls.find(authorize)!.url).toMatch(/^https:\/\/acme\.my\.salesforce\.com\/services\/oauth2\/authorize/);
+    expect(decodeURIComponent(location)).toContain('acme.my.salesforce.com doesn');
+  });
+
+  it('proceeds when Salesforce accepts the request (a 302 to its login page)', async () => {
+    const { fetchFn } = fakeSalesforce((c) => (authorize(c) ? new Response(null, { status: 302, headers: { location: 'https://login.salesforce.com/setup/secur/x' } }) : undefined));
+    const { location, setCookie } = await login(fetchFn);
+    expect(location).toMatch(/^https:\/\/login\.salesforce\.com\/services\/oauth2\/authorize\?/);
+    expect(setCookie).toMatch(/d360_oauth=/);
+  });
+
+  it('never blocks sign-in because the preflight itself failed or answered oddly', async () => {
+    for (const handler of [
+      () => { throw new Error('network down'); },
+      () => new Response('<html>maintenance</html>', { status: 503 }),
+      () => new Response('<html>not an error body</html>', { status: 400 }),
+    ]) {
+      const { fetchFn } = fakeSalesforce(handler);
+      const { location } = await login(fetchFn);
+      expect(location).toMatch(/^https:\/\/login\.salesforce\.com\/services\/oauth2\/authorize\?/);
+    }
+  });
+
+  it('can be switched off', async () => {
+    const { fetchFn, calls } = fakeSalesforce(() => rejection('invalid_client_id'));
+    const { location } = await login(fetchFn, '', { SF_AUTHORIZE_PREFLIGHT: '0' });
+    expect(location).toMatch(/^https:\/\/login\.salesforce\.com\/services\/oauth2\/authorize\?/);
+    expect(calls).toHaveLength(0);
   });
 });
