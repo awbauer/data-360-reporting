@@ -6,6 +6,7 @@ import type { CellValue, ObjectKind, ObjectMeta } from '@shared/types';
 import { runToCompletion } from '../api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { FieldDistribution } from '../components/FieldDistribution';
+import { InsightDefinitionCard, Lineage } from '../components/Lineage';
 import { RelationshipMap } from '../components/RelationshipMap';
 import { useWorkbench } from '../context';
 import { fmtAgo, fmtNum, fmtPct } from '../lib/format';
@@ -233,6 +234,8 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
           </tbody>
         </table>
       </div>
+
+      {obj.kind === 'ci' ? <InsightDefinitionCard obj={obj} /> : <Lineage obj={obj} />}
 
       <div className="card">
         <h2>Relationships ({neighbors.length})</h2>

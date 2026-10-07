@@ -13,7 +13,7 @@ const { raw, db } = openNodeDatabase(config.databasePath);
 const store = createStore(db);
 // Loaded lazily so the mock's fixtures aren't loaded outside mock mode.
 const mockClient = config.mock ? (await import('./data360/mock/client')).createMockClient() : undefined;
-const app = createApp({ config, auth: createAuth(config, raw), store, ...(mockClient ? { mockClient } : {}) });
+const app = createApp({ config, auth: createAuth(config, raw, { store }), store, ...(mockClient ? { mockClient } : {}) });
 
 const purge = () => purgeExpired(config, store).catch((e: unknown) => console.error('Audit purge failed', e));
 void purge();

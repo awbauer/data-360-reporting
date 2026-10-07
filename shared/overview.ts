@@ -1,4 +1,4 @@
-import type { ObjectMeta } from '@shared/types';
+import type { ObjectMeta } from './types';
 
 export interface OverviewStats {
   counts: { dmo: number; dlo: number; ci: number };

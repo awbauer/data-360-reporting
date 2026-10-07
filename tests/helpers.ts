@@ -48,7 +48,7 @@ function build(config: Config, fetchFn?: FetchLike) {
   const { raw, db } = openNodeDatabase(':memory:');
   const store = createStore(db);
   // Password sign-in lets tests create users without GitHub/Google; real config never enables it.
-  const auth = createAuth(config, raw, { passwordSignIn: true });
+  const auth = createAuth(config, raw, { store, passwordSignIn: true });
   const app = createApp({
     config,
     auth,

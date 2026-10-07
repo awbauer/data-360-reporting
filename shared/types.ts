@@ -92,6 +92,8 @@ export interface StreamInfo {
   lastRunStatus?: string;
   lastRefreshDate?: string;
   totalRecords?: number;
+  /** The data lake object this stream loads, when the API says. */
+  dataLakeObject?: string;
 }
 
 export interface SegmentInfo {
@@ -101,6 +103,52 @@ export interface SegmentInfo {
   publishStatus?: string;
   lastMemberCount?: number;
   lastPublished?: string;
+  description?: string;
+  /** The object the segment is built on (usually Unified Individual). */
+  segmentOn?: string;
+  segmentType?: string;
+  /** Read-only rule text as the API returns it (often escaped JSON). */
+  includeCriteria?: string;
+  excludeCriteria?: string;
+}
+
+/** One DLO → DMO mapping and its field pairs (`/ssot/data-model-object-mappings`). */
+export interface ObjectMapping {
+  name: string;
+  /** Source data lake object. */
+  source: string;
+  /** Target data model object. */
+  target: string;
+  fields: { source: string; target: string }[];
+}
+
+export interface MappingResult {
+  mappings: ObjectMapping[];
+  /** The upstream response, kept so the shape can be checked against a real org. */
+  raw: unknown;
+}
+
+export interface InsightField {
+  name: string;
+  label: string;
+  /** Formula or aggregation, when the API includes one. */
+  formula?: string;
+}
+
+/** `/ssot/calculated-insights/{apiName}`. Everything but the name is best-effort. */
+export interface InsightDefinition {
+  name: string;
+  label: string;
+  description?: string;
+  expression?: string;
+  status?: string;
+  lastRunStatus?: string;
+  lastRunAt?: string;
+  definitionType?: string;
+  schedule?: string;
+  dimensions: InsightField[];
+  measures: InsightField[];
+  raw: unknown;
 }
 
 /** A best-effort list: `truncated` means there were more than we fetched. */

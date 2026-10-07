@@ -3,9 +3,9 @@ import { createRequire } from 'node:module';
 import type { DatabaseSync as DatabaseSyncType, SQLInputValue } from 'node:sqlite';
 import { DATE_UNITS, parseTimestamp, truncate, type DateUnit } from '../../../shared/histogram';
 import type { CellValue, Extras, QueryColumn } from '../../../shared/types';
-import { normalizeDataSpaces, normalizeMetadata } from '../normalize';
+import { normalizeDataSpaces, normalizeInsight, normalizeMappings, normalizeMetadata } from '../normalize';
 import { UpstreamError, type Data360Client } from '../types';
-import { DATA_SPACES, MARKETING_OBJECTS, METADATA } from './fixtures';
+import { DATA_SPACES, INSIGHTS, MAPPINGS, MARKETING_OBJECTS, METADATA } from './fixtures';
 
 // Loaded via require: Vite/Vitest don't recognise the newer `node:sqlite` builtin.
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
@@ -82,8 +82,34 @@ function seed(db: DatabaseSync): void {
   ins('ssot__Case__dlm', ['ssot__Id__c', 'ssot__Subject__c'], range(120).map((i) => [`CASE-${i}`, `Issue ${i}`]));
   ins('Contact_Home__dll', ['Id__c', 'Email__c', 'Score__c', 'ModifiedDate__c'],
     range(1200).map((i) => [`C-${i}`, maybe(0.1, `contact${i}@example.com`), Math.round(rnd() * 100), date()]));
+  seedIdentity(db, people as unknown[][]);
   ins('Avg_Spends__cio', ['Id__c', 'FirstName__c', 'Avg_Spend__c'],
     range(50).map((i) => [`IND-${String(i).padStart(5, '0')}`, pick(FIRST), Math.round(rnd() * 50_000) / 100]));
+}
+
+/** Unified profiles: individuals grouped into clusters of 1–5 (mostly 1–2), with their own RNG. */
+function seedIdentity(db: DatabaseSync, people: unknown[][]): void {
+  const rnd = mulberry32(7);
+  db.exec(`
+    CREATE TABLE "UnifiedIndividual__dlm" ("ssot__Id__c" TEXT, "ssot__FirstName__c" TEXT, "ssot__LastName__c" TEXT);
+    CREATE TABLE "IndividualIdentityLink__dlm" ("ssot__Id__c" TEXT, "SourceRecordId__c" TEXT, "UnifiedRecordId__c" TEXT,
+      "ssot__DataSourceId__c" TEXT, "ssot__DataSourceObjectId__c" TEXT);
+  `);
+  const unified = db.prepare('INSERT INTO "UnifiedIndividual__dlm" VALUES (?, ?, ?)');
+  const link = db.prepare('INSERT INTO "IndividualIdentityLink__dlm" VALUES (?, ?, ?, ?, ?)');
+  db.exec('BEGIN');
+  let i = 0;
+  let u = 0;
+  while (i < people.length) {
+    const r = rnd();
+    const size = r < 0.55 ? 1 : r < 0.85 ? 2 : r < 0.95 ? 3 : r < 0.99 ? 4 : 5;
+    const id = `UNI-${String(u++).padStart(5, '0')}`;
+    const head = people[i]!;
+    unified.run(id, head[2] as SQLInputValue, head[3] as SQLInputValue);
+    for (const p of people.slice(i, i + size)) link.run(`LNK-${p[0]}`, p[0] as SQLInputValue, id, p[6] as SQLInputValue, 'Individual');
+    i += size;
+  }
+  db.exec('COMMIT');
 }
 
 function columnType(v: CellValue): string {
@@ -150,12 +176,18 @@ export function createMockClient(): Data360Client {
 
     async getExtras(dataspace): Promise<Extras> {
       const streams = [
-        { name: 'Salesforce_CRM_Contact', label: 'Salesforce CRM Contact', status: 'ACTIVE', lastRunStatus: 'SUCCESS', lastRefreshDate: '2026-10-05T04:10:00Z', totalRecords: 2500 },
+        { name: 'Salesforce_CRM_Contact', label: 'Salesforce CRM Contact', status: 'ACTIVE', lastRunStatus: 'SUCCESS', lastRefreshDate: '2026-10-05T04:10:00Z', totalRecords: 2500, dataLakeObject: 'Contact_Home__dll' },
         { name: 'Web_SDK_Events', label: 'Web SDK Events', status: 'ACTIVE', lastRunStatus: 'SUCCESS', lastRefreshDate: '2026-10-06T01:00:00Z', totalRecords: 5000 },
         { name: 'Ecommerce_Orders', label: 'Ecommerce Orders', status: 'ACTIVE', lastRunStatus: 'FAILED', lastRefreshDate: '2026-10-03T22:30:00Z', totalRecords: 1200 },
       ];
       const segments = [
-        { apiName: 'Lapsed_VIPs', label: 'Lapsed VIPs', status: 'ACTIVE', publishStatus: 'PUBLISH_SUCCESS', lastMemberCount: 312, lastPublished: '2026-10-05T12:00:00Z' },
+        {
+          apiName: 'Lapsed_VIPs', label: 'Lapsed VIPs', status: 'ACTIVE', publishStatus: 'PUBLISH_SUCCESS', lastMemberCount: 312,
+          lastPublished: '2026-10-05T12:00:00Z', description: 'High earners with no email engagement in 90 days.', segmentOn: 'UnifiedIndividual__dlm',
+          segmentType: 'UI',
+          includeCriteria: JSON.stringify({ filters: [{ object: 'ssot__Individual__dlm', field: 'ssot__YearlyIncome__c', operator: 'greaterThan', value: '100000' }] }),
+          excludeCriteria: JSON.stringify({ filters: [{ object: 'ssot__EmailEngagement__dlm', field: 'ssot__EngagementDateTime__c', operator: 'lastNDays', value: '90' }] }),
+        },
         { apiName: 'New_Subscribers', label: 'New Subscribers', status: 'ACTIVE', publishStatus: 'PUBLISH_SUCCESS', lastMemberCount: 1840, lastPublished: '2026-10-06T06:00:00Z' },
         { apiName: 'Draft_Test', label: 'Draft Test', status: 'INACTIVE' },
       ];
@@ -164,6 +196,18 @@ export function createMockClient(): Data360Client {
         segments: dataspace === 'default' ? { total: segments.length, truncated: false, items: segments } : { total: 1, truncated: false, items: segments.slice(1, 2) },
         errors: [],
       };
+    },
+
+    async getMappings(_dataspace, object, kind) {
+      const all = normalizeMappings(MAPPINGS);
+      const mine = all.mappings.filter((m) => (kind === 'dmo' ? m.target === object : m.source === object));
+      return { mappings: mine, raw: { objectSourceTargetMaps: MAPPINGS.objectSourceTargetMaps.filter((m) => (kind === 'dmo' ? m.targetEntityDeveloperName : m.sourceEntityDeveloperName) === object) } };
+    },
+
+    async getCalculatedInsight(_dataspace, name) {
+      const raw = INSIGHTS[name];
+      if (!raw) throw new UpstreamError(404, `Calculated insight ${name} not found`, 'NOT_FOUND');
+      return normalizeInsight(raw, name);
     },
 
     async submitQuery({ sql, params, rowLimit }) {

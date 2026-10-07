@@ -2,12 +2,19 @@
 
 A web workbench for Salesforce **Data 360** (formerly Data Cloud). Sign in to the workbench (GitHub or Google), connect a Salesforce org, then:
 
-- **Overview**: high-level abstracts of the org's model (objects by category, field-type mix, relationship hubs, objects with no relationships), plus data stream and segment counts and which streams' last run failed. These come from metadata and list endpoints only, so they use no query credits.
-- **Explorer**: browse data model objects (DMOs), data lake objects (DLOs) and calculated insights, with fields, keys and relationships. Count rows, profile fields (non-null %, approximate distinct, min/max) and see each field's distribution on demand: a **histogram** for numbers and dates (nice bucket edges, or `date_trunc` by hour/day/week/month/quarter/year, with the null share) and top values for everything else. Each object has a clickable **relationship map**, and **Build JOIN** opens a ready-made JOIN of two related objects in the editor.
+- **Overview**: high-level abstracts of the org's model (objects by category, field-type mix, relationship hubs, objects with no relationships), plus data stream and segment counts and which streams' last run failed. These come from metadata and list endpoints only, so they use no query credits. Two exports build on it, also without running queries:
+  - **Data dictionary** (Excel, CSV zip or Markdown): every object and field with type, keys, key qualifiers and calculated-insight roles, plus relationships, and any row counts and profile statistics cached in your browser (each marked with when it was computed). No row data.
+  - **Health check** (printable HTML, or Markdown): model inventory, objects without relationships, data streams and failed runs, segments by publish status, and field completeness for objects you've profiled. It lists any section it couldn't produce and why. Print the HTML to PDF to hand to a client.
+- **Explorer**: browse data model objects (DMOs), data lake objects (DLOs) and calculated insights, with fields, keys and relationships. Count rows, profile fields (non-null %, approximate distinct, min/max) and see each field's distribution on demand: a **histogram** for numbers and dates (nice bucket edges, or `date_trunc` by hour/day/week/month/quarter/year, with the null share) and top values for everything else. Each object has a clickable **relationship map**, and **Build JOIN** opens a ready-made JOIN of two related objects in the editor. **Lineage**: a DMO shows which data lake object fields map to each of its fields (and which data stream loads them), plus the fields nothing maps to; a DLO shows the DMOs it feeds. Calculated insights show their **definition** (SQL expression, how each dimension and measure is computed, status and schedule).
+- **Segments**: every segment in the data space with status, publish status, last member count, the object it's built on, and its include/exclude rules (read-only).
 - **Query**: a SQL editor with autocomplete from your metadata, `:named` parameters, **multiple tabs**, **Format**, cancel, paging, CSV export and a **Table / Chart** toggle (bar or line of one measure against one dimension). Queries with no `LIMIT` ask first, showing cached row counts for the objects they read.
-- **Library**: a shared set of saved queries that lives in this repository (`queries/`) and changes through pull requests.
+- **Library**: a shared set of saved queries that lives in this repository (`queries/`) and changes through pull requests. `queries/identity/` holds identity-resolution diagnostics: consolidation rate, cluster-size distribution, largest clusters, profiles by source, overlap between sources and individuals without a unified profile.
 - **History**: your recent editor runs, on any device you sign in from.
-- **Audit** (admins): every query run through the workbench, by whom, against which org, with its outcome. Downloadable as CSV.
+- **Admin** (people in `AUTH_ADMIN_EMAILS`):
+  - **Users**: everyone who has signed in, with provider, last sign-in, active sessions and query count. Open one to see their sessions and sign-in history, sign them out everywhere, or **block** them. Blocking ends their sessions at once and refuses future sign-ins, whatever the allowlist says. Admins can't block themselves or another admin.
+  - **Sign-ins**: every successful sign-in, and every attempt the allowlist or a block turned away, with IP and browser.
+  - **Queries**: every query run through the workbench, by whom, against which org, with its outcome. Downloadable as CSV.
+  - **Admin log**: who blocked, unblocked or signed out whom.
 
 The Salesforce connection is user-initiated: the app never redirects to Salesforce on load.
 
@@ -48,7 +55,7 @@ Only if your org requires a secret for the web-server flow: set `SF_CLIENT_SECRE
 **One app, many orgs?** An External Client App only authorizes the org that owns it. To connect another org, users can enter that org's own **consumer key** (and **secret**, if the app requires one) under *Your own External Client App* on the Connect screen:
 
 - The credentials go to the server in a POST body, never a URL, and are parked in a 10-minute sealed cookie for the login redirect. The secret then lives inside the encrypted session cookie (needed for token refresh).
-- With **Save to my account**, they are stored in the database under a name (say "Acme sandbox"), so a consultant can keep one per client org and use it from any device. The secret is AES-256-GCM encrypted with `SESSION_KEY` and bound to the owning user and row, so neither a database dump nor a copied row reveals it. Saved credentials are listed without secrets and can be deleted from the Connect screen. Rotating `SESSION_KEY` makes saved secrets unreadable (the app says so); users re-enter them.
+- With **Save this connection to my account**, they are stored in the database under a name (say "Acme sandbox") together with where they sign in (Production, Sandbox or the My Domain), so a consultant can keep one per client org and connect with one click from any device. The page shows only a masked key (`3MVG9A…x7Qk`); the full key never goes back to the browser. Connections saved before the sign-in host was stored ask for it once. The secret is AES-256-GCM encrypted with `SESSION_KEY` and bound to the owning user and row, so neither a database dump nor a copied row reveals it. Saved credentials are listed without secrets and can be deleted from the Connect screen. Rotating `SESSION_KEY` makes saved secrets unreadable (the app says so); users re-enter them.
 - Without a secret (preferred) the app signs in with PKCE alone. The server's own `SF_CLIENT_SECRET` is never sent with a user-supplied key.
 
 ### Verify against your org
@@ -61,6 +68,14 @@ npm run smoke                       # or: SF_TARGET_ORG=<alias> npm run smoke
 ```
 
 It exercises data spaces, metadata, submit/status/rows/cancel and a parameterised query, and prints HTTP statuses and response *shapes* only (no tokens, no row values), so the output is safe to share.
+
+Three features were built from the spec alone and need that run before you rely on them; the smoke test prints the key names they depend on:
+
+- **Lineage** reads `/ssot/data-model-object-mappings` (`objectSourceTargetMaps`, filtered with `dmoDeveloperName` / `dloDeveloperName`) and a stream's `dataLakeObjectInfo`.
+- **Insight definitions** read `/ssot/calculated-insights/{apiName}`; **segment rules** read `includeCriteria` / `excludeCriteria` from the segment list.
+- **Identity queries** assume `IndividualIdentityLink__dlm` (`SourceRecordId__c`, `UnifiedRecordId__c`, `ssot__DataSourceId__c`).
+
+The lineage and definition cards include a **Raw API response** toggle so you can compare against what the normalizer understood.
 
 ## Configuration
 
@@ -131,7 +146,9 @@ Security notes:
 
 Everything runs as the person who signed in. Sign-in is the OAuth authorization-code flow, so the access token is that user's, and the server uses only that token for Connect API calls (there is no integration user or client-credentials flow). Salesforce documents the `cdp_query_api` scope as running SQL "on behalf of the user", and the query endpoints require that user to have permission to the data space. So data access follows the user's own permissions, and the user is the one Salesforce sees.
 
-The workbench also keeps its own record: every query (from the editor, Explorer and Overview) is written to `query_log` **before** it is sent to Salesforce, with the workbench user's email, the org host, the Salesforce org and user ids from their token, the data space, SQL, parameter values, status, row count and timing. If that write fails, the query does not run. Parameter values are stored as typed, so treat the audit log as sensitive. Users see their own editor runs under History ("Clear" hides them there; the audit keeps them). Admins see everything under Audit and can download it as CSV.
+The workbench also keeps its own record: every query (from the editor, Explorer and Overview) is written to `query_log` **before** it is sent to Salesforce, with the workbench user's email, the org host, the Salesforce org and user ids from their token, the data space, SQL, parameter values, status, row count and timing. If that write fails, the query does not run. Parameter values are stored as typed, so treat the audit log as sensitive. Users see their own editor runs under History ("Clear" hides them there; the audit keeps them). Admins see everything under Admin → Queries and can download it as CSV.
+
+Sign-ins are recorded too (`login_event`): successes, and attempts refused by the allowlist or a block, with IP (from `CF-Connecting-IP` on Cloudflare, otherwise the first `X-Forwarded-For` hop, which a client can forge when Node isn't behind a proxy) and user agent. Both logs are purged after `AUDIT_RETENTION_DAYS`. Admin actions (`admin_action`) are not purged.
 
 ## Cost awareness
 

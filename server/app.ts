@@ -2,16 +2,19 @@ import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { secureHeaders } from 'hono/secure-headers';
 import { z, ZodError } from 'zod';
-import { isAdmin, isAllowed, type AppUser, type Auth } from './auth';
+import { isAdmin, isAllowed, withSignInEvents, type AppUser, type Auth } from './auth';
 import type { Config } from './config';
 import { pkceChallenge, randomToken, seal, unseal } from './crypto';
 import { createConnectClient, type SessionHolder } from './data360/client';
 import { UpstreamError, type Data360Client } from './data360/types';
 import { assertAllowedOrigin, HostNotAllowedError } from './hosts';
 import { authorizeUrl, exchangeCode, OAuthError, revokeToken, type FetchLike, type OAuthTx, type Session } from './oauth';
-import type { RunRecord, Store } from './store';
+import { maskClientId, type RunRecord, type Store } from './store';
+import type { Block } from './admin-store';
+import { registerAdminRoutes } from './admin-routes';
+import { toCsvLine } from '../shared/csv';
 import { toSqlParameters } from '../shared/sql';
-import type { CellValue, ParamDef, QueryResponse } from '../shared/types';
+import type { ParamDef, QueryResponse } from '../shared/types';
 
 export interface AppDeps {
   config: Config;
@@ -22,7 +25,7 @@ export interface AppDeps {
   store: Store;
 }
 
-type Env = { Variables: { user?: AppUser; session?: Session; holder?: SessionHolder; client?: Data360Client } };
+type Env = { Variables: { user?: AppUser; block?: Block | null; session?: Session; holder?: SessionHolder; client?: Data360Client } };
 
 const SESSION_COOKIE = 'd360_session';
 const TX_COOKIE = 'd360_oauth';
@@ -42,6 +45,7 @@ const MAX_SAVED_CREDENTIALS = 25;
 const MAX_STATE_BYTES = 512 * 1024;
 const STATE_KEYS = new Set(['tabs']);
 const DATASPACE_RE = /^[A-Za-z0-9_]{1,80}$/;
+const OBJECT_NAME_RE = /^[A-Za-z0-9_]{1,255}$/;
 const QUERY_ID_RE = /^[A-Za-z0-9%._~=+-]{1,512}$/;
 const CLIENT_ID_RE = /^[A-Za-z0-9._-]{10,256}$/;
 const CLIENT_SECRET_RE = /^\S{8,256}$/;
@@ -49,6 +53,8 @@ const CLIENT_SECRET_RE = /^\S{8,256}$/;
 interface Credentials {
   clientId: string;
   clientSecret?: string;
+  /** Where to sign in; set for saved connections, which then ignore the page's org-type choice. */
+  loginHost?: string;
 }
 
 const paramDef = z.object({
@@ -57,13 +63,18 @@ const paramDef = z.object({
   label: z.string().optional(),
   default: z.string().optional(),
 });
+const loginChoice = {
+  env: z.enum(['production', 'sandbox', 'custom']).optional(),
+  domain: z.string().trim().max(255).optional(),
+};
 const credentialFields = {
   clientId: z.string().trim().regex(CLIENT_ID_RE, 'That does not look like a consumer key'),
   clientSecret: z.string().regex(CLIENT_SECRET_RE, 'That does not look like a consumer secret').optional(),
   label: z.string().trim().max(80).optional(),
+  ...loginChoice,
 };
 const credentialsBody = z.union([
-  z.object({ savedId: z.string().uuid() }),
+  z.object({ savedId: z.string().uuid(), ...loginChoice }),
   z.object({ ...credentialFields, remember: z.boolean().default(false) }),
 ]);
 const queryBody = z.object({
@@ -75,6 +86,14 @@ const queryBody = z.object({
 });
 
 export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, store }: AppDeps): Hono<Env> {
+  /** Production, Sandbox or a My Domain (checked against the host allowlist) to a login origin. */
+  const loginHostFor = (env: string | undefined, domain: string | undefined): string =>
+    env === 'sandbox'
+      ? 'https://test.salesforce.com'
+      : env === 'custom'
+        ? assertAllowedOrigin(domain ?? '', config.allowedHostSuffixes)
+        : config.loginUrl;
+
   const app = new Hono<Env>();
   const cookieOpts = { httpOnly: true, secure: config.secureCookies, sameSite: 'Lax' as const, path: '/' };
 
@@ -98,7 +117,7 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
   );
 
   // App sign-in (Better Auth). It checks the Origin of its own POSTs against trustedOrigins.
-  app.on(['GET', 'POST'], '/api/auth/*', (c) => auth.handler(c.req.raw));
+  app.on(['GET', 'POST'], '/api/auth/*', (c) => withSignInEvents(store, () => auth.handler(c.req.raw)));
 
   // CSRF: state-changing requests must carry a custom header, which cross-site forms can't set.
   app.use('*', async (c, next) => {
@@ -112,7 +131,11 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
   app.use('*', async (c, next) => {
     const { headers, response } = await auth.api.getSession({ headers: c.req.raw.headers, returnHeaders: true });
     const user = response?.user;
-    if (user) {
+    // The session must still exist (an admin may have revoked it, which Better Auth's cookie cache
+    // wouldn't notice for minutes), and its user must not be blocked. One read covers both.
+    const state = user ? await store.sessionState(response.session.token, user.id) : null;
+    if (user && state?.live) {
+      c.set('block', state.block);
       const u: AppUser = { id: user.id, email: user.email.toLowerCase(), name: user.name, emailVerified: user.emailVerified, image: user.image ?? null };
       c.set('user', u);
       const token = getCookie(c, SESSION_COOKIE);
@@ -135,7 +158,12 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
     const s = c.get('session');
     const u = c.get('user');
     return c.json({
-      user: u ? { email: u.email, name: u.name, image: u.image ?? null, allowed: isAllowed(config, u), admin: isAdmin(config, u) } : null,
+      user: u
+        ? {
+            email: u.email, name: u.name, image: u.image ?? null, allowed: isAllowed(config, u), admin: isAdmin(config, u),
+            blocked: Boolean(c.get('block')),
+          }
+        : null,
       providers: [...(config.providers.github ? ['github'] : []), ...(config.providers.google ? ['google'] : [])],
       connected: Boolean(s),
       instanceHost: s ? new URL(s.instanceUrl).host : null,
@@ -147,10 +175,12 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
   // Everything below needs a signed-in user on the allowlist.
   const gate = (redirect: boolean) => async (c: Context<Env>, next: () => Promise<void>) => {
     const u = c.get('user');
-    if (!u || !isAllowed(config, u)) {
-      const [code, message] = u
-        ? (['not_allowed', `${u.email} is not allowed to use this app.`] as const)
-        : (['unauthenticated', 'Sign in first.'] as const);
+    if (!u || !isAllowed(config, u) || c.get('block')) {
+      const [code, message] = !u
+        ? (['unauthenticated', 'Sign in first.'] as const)
+        : c.get('block')
+          ? (['blocked', 'Your access to this workbench has been suspended. Contact an administrator.'] as const)
+          : (['not_allowed', `${u.email} is not allowed to use this app.`] as const);
       return redirect ? c.redirect(`/?error=${encodeURIComponent(message)}`) : c.json({ error: code, message }, u ? 403 : 401);
     }
     await next();
@@ -177,17 +207,12 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
         });
         return c.redirect('/');
       }
-      const env = c.req.query('env') ?? 'production';
-      const loginHost =
-        env === 'sandbox'
-          ? 'https://test.salesforce.com'
-          : env === 'custom'
-            ? assertAllowedOrigin(c.req.query('domain') ?? '', config.allowedHostSuffixes)
-            : config.loginUrl;
-      // Credentials the user entered (set just before by POST /auth/credentials) override the app's own.
+      // Credentials the user entered or picked (set just before by POST /auth/credentials) override
+      // the app's own, and a saved connection's login host overrides the org-type choice.
       const credToken = getCookie(c, CRED_COOKIE);
       deleteCookie(c, CRED_COOKIE, { path: '/' });
       const cred = credToken ? await unseal<Credentials>(config.sessionKey, credToken, P.cred(user)) : null;
+      const loginHost = cred?.loginHost ?? loginHostFor(c.req.query('env'), c.req.query('domain'));
       const clientId = cred?.clientId ?? config.clientId;
       if (!clientId) return fail('No consumer key configured. Enter one under Advanced.');
       const verifier = randomToken(48);
@@ -222,24 +247,36 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
       if (row.secretEnc && !secret) {
         return c.json({ error: 'saved_unreadable', message: 'The saved secret can no longer be decrypted (SESSION_KEY changed?). Delete it and save it again.' }, 400);
       }
-      cred = { clientId: row.clientId, ...(secret ? { clientSecret: secret } : {}) };
+      // Connections saved before hosts were stored take the page's choice once, and keep it.
+      let loginHost = row.loginHost;
+      if (!loginHost) {
+        loginHost = loginHostFor(body.env, body.domain);
+        await store.setCredentialLoginHost(user.id, body.savedId, loginHost);
+      }
+      cred = { clientId: row.clientId, ...(secret ? { clientSecret: secret } : {}), loginHost };
       savedId = body.savedId;
       await store.touchCredential(user.id, savedId);
     } else {
-      cred = { clientId: body.clientId, ...(body.clientSecret ? { clientSecret: body.clientSecret } : {}) };
-      if (body.remember) savedId = await saveCredential(user, body);
+      const loginHost = body.env ? loginHostFor(body.env, body.domain) : undefined;
+      cred = { clientId: body.clientId, ...(body.clientSecret ? { clientSecret: body.clientSecret } : {}), ...(loginHost ? { loginHost } : {}) };
+      if (body.remember) savedId = await saveCredential(user, { ...body, loginHost: loginHost ?? config.loginUrl });
     }
     setCookie(c, CRED_COOKIE, await seal(config.sessionKey, cred, TX_TTL, P.cred(user)), { ...cookieOpts, maxAge: TX_TTL });
-    return c.json({ clientId: cred.clientId, hasSecret: Boolean(cred.clientSecret), ...(savedId ? { savedId } : {}) });
+    return c.json({
+      clientIdHint: maskClientId(cred.clientId),
+      hasSecret: Boolean(cred.clientSecret),
+      ...(cred.loginHost ? { loginHost: cred.loginHost } : {}),
+      ...(savedId ? { savedId } : {}),
+    });
   });
 
-  const saveCredential = async (user: AppUser, b: { clientId: string; clientSecret?: string; label?: string }): Promise<string> => {
+  const saveCredential = async (user: AppUser, b: { clientId: string; clientSecret?: string; label?: string; loginHost: string }): Promise<string> => {
     if ((await store.listCredentials(user.id)).length >= MAX_SAVED_CREDENTIALS) {
       throw new RangeError(`You can save at most ${MAX_SAVED_CREDENTIALS} credentials. Delete one first.`);
     }
     const id = crypto.randomUUID();
     const secretEnc = b.clientSecret ? await seal(config.sessionKey, b.clientSecret, SAVED_TTL, P.saved(user, id)) : null;
-    await store.saveCredential(user.id, { id, label: b.label || `${b.clientId.slice(0, 12)}…`, clientId: b.clientId, secretEnc });
+    await store.saveCredential(user.id, { id, label: b.label || new URL(b.loginHost).host, clientId: b.clientId, secretEnc, loginHost: b.loginHost });
     return id;
   };
 
@@ -280,6 +317,8 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
     await store.hideHistory(c.get('user')!.id);
     return c.json({ ok: true });
   });
+
+  registerAdminRoutes(app, { config, store });
 
   app.get('/api/audit', async (c) => {
     if (!isAdmin(config, c.get('user')!)) return c.json({ error: 'forbidden', message: 'Admins only' }, 403);
@@ -322,7 +361,7 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
 
   app.post('/api/credentials', async (c) => {
     const body = z.object(credentialFields).parse(await c.req.json());
-    return c.json({ id: await saveCredential(c.get('user')!, body) });
+    return c.json({ id: await saveCredential(c.get('user')!, { ...body, loginHost: loginHostFor(body.env, body.domain) }) });
   });
 
   app.delete('/api/credentials/:id', async (c) => {
@@ -360,6 +399,20 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
   app.get('/api/metadata', async (c) => c.json(await c.get('client')!.getMetadata(dataspaceOf(c))));
 
   app.get('/api/extras', async (c) => c.json(await c.get('client')!.getExtras(dataspaceOf(c))));
+
+  const objectNameOf = (v: string | undefined): string => {
+    if (!v || !OBJECT_NAME_RE.test(v)) throw new RangeError('Invalid object name');
+    return v;
+  };
+
+  // Lineage: which DLOs feed a DMO, or which DMOs a DLO feeds. Metadata only, no query credits.
+  app.get('/api/mappings', async (c) => {
+    const kind = z.enum(['dmo', 'dlo']).parse(c.req.query('kind'));
+    return c.json(await c.get('client')!.getMappings(dataspaceOf(c), objectNameOf(c.req.query('object')), kind));
+  });
+
+  app.get('/api/insights/:name', async (c) =>
+    c.json(await c.get('client')!.getCalculatedInsight(dataspaceOf(c), objectNameOf(c.req.param('name')))));
 
   app.post('/api/query', async (c) => {
     const body = queryBody.parse(await c.req.json());
@@ -492,6 +545,7 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
     if (err instanceof ZodError) {
       return c.json({ error: 'bad_request', message: err.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') }, 400);
     }
+    if (err instanceof HostNotAllowedError) return c.json({ error: 'bad_request', message: err.message }, 400);
     if (err instanceof RangeError || err instanceof SyntaxError || (err instanceof Error && /^(Parameter|Missing value)/.test(err.message))) {
       return c.json({ error: 'bad_request', message: err.message }, 400);
     }
@@ -540,19 +594,7 @@ function toHistoryItem(r: RunRecord): HistoryItem {
 
 /** Deletes audit entries past the retention window. Run daily (Worker cron / Node timer). */
 export async function purgeExpired(config: Config, store: Store, now = Date.now()): Promise<number> {
-  return store.purgeRuns(now - config.auditRetentionDays * 86_400_000);
+  const cutoff = now - config.auditRetentionDays * 86_400_000;
+  return (await store.purgeRuns(cutoff)) + (await store.purgeLogins(cutoff));
 }
 
-// ------------------------------------------------------------------- csv
-
-function csvCell(v: CellValue): string {
-  if (v === null || v === undefined) return '';
-  let s = String(v);
-  // Neutralize spreadsheet formula injection from org data.
-  if (typeof v === 'string' && /^([=+@\t\r]|-[^0-9.])/.test(s)) s = `'${s}`;
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-export function toCsvLine(row: CellValue[] | string[]): string {
-  return row.map(csvCell).join(',');
-}

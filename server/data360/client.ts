@@ -3,6 +3,8 @@ import { refreshSession, type FetchLike, type Session } from '../oauth';
 import type { ObjectKind } from '../../shared/types';
 import {
   normalizeDataSpaces,
+  normalizeInsight,
+  normalizeMappings,
   normalizeMetadata,
   normalizePage,
   normalizeSegments,
@@ -138,6 +140,15 @@ export function createConnectClient(
         segments: g.status === 'fulfilled' ? g.value : null,
         errors,
       };
+    },
+
+    async getMappings(dataspace, object, kind) {
+      const key = kind === 'dmo' ? 'dmoDeveloperName' : 'dloDeveloperName';
+      return normalizeMappings(await call('GET', `/data-model-object-mappings${qs({ dataspace, [key]: object })}`));
+    },
+
+    async getCalculatedInsight(dataspace, name) {
+      return normalizeInsight(await call('GET', `/calculated-insights/${encodeURIComponent(name)}${qs({ dataspace })}`), name);
     },
 
     async submitQuery({ sql, dataspace, params, rowLimit }) {

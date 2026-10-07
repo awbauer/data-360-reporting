@@ -9,6 +9,7 @@ const PROVIDER_LABEL: Record<Provider, string> = { github: 'Continue with GitHub
 const ERRORS: Record<string, string> = {
   unable_to_create_user: "That account isn't on this workbench's allowlist. Ask its administrator to add your email or domain.",
   not_allowed: "That account isn't on this workbench's allowlist. Ask its administrator to add your email or domain.",
+  blocked: 'Your access to this workbench has been suspended by an administrator.',
   account_not_linked: 'An account with that email already exists with another provider. Sign in with that one.',
   state_mismatch: 'The sign-in took too long or was started in another tab. Try again.',
   please_restart_the_process: 'The sign-in took too long or was started in another tab. Try again.',
@@ -97,10 +98,16 @@ export function NotAllowed({ session }: { session: SessionInfo }) {
           <span className="brand-mark" aria-hidden />
           Data 360 Workbench
         </div>
-        <div className="alert error" role="alert">
-          You're signed in as <b>{session.user?.email}</b>, which isn't allowed to use this workbench. Ask its
-          administrator to add your email or domain, or sign in with another account. Only provider-verified emails count.
-        </div>
+        {session.user?.blocked ? (
+          <div className="alert error" role="alert">
+            Your access to this workbench (<b>{session.user.email}</b>) has been suspended by an administrator.
+          </div>
+        ) : (
+          <div className="alert error" role="alert">
+            You're signed in as <b>{session.user?.email}</b>, which isn't allowed to use this workbench. Ask its
+            administrator to add your email or domain, or sign in with another account. Only provider-verified emails count.
+          </div>
+        )}
         <button onClick={signOut}>Sign out</button>
       </div>
     </div>

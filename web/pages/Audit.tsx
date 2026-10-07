@@ -1,5 +1,6 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, type AuditEntry } from '../api';
 import { fmtMs, fmtNum } from '../lib/format';
 
@@ -7,9 +8,12 @@ const PAGE = 200;
 
 /** Admins only (AUTH_ADMIN_EMAILS): every query run through the workbench, by whom, against which org. */
 export function AuditPage() {
-  const [email, setEmail] = useState('');
+  // Linked from a user's admin page as ?email=.
+  const [params] = useSearchParams();
+  const initialEmail = params.get('email') ?? '';
+  const [email, setEmail] = useState(initialEmail);
   const [host, setHost] = useState('');
-  const [filter, setFilter] = useState<{ email?: string; host?: string }>({});
+  const [filter, setFilter] = useState<{ email?: string; host?: string }>(initialEmail ? { email: initialEmail } : {});
   const [open, setOpen] = useState<string | null>(null);
 
   const log = useInfiniteQuery({
@@ -22,10 +26,10 @@ export function AuditPage() {
   const rows = log.data?.pages.flat() ?? [];
 
   return (
-    <div className="page">
+    <>
       <div className="row wrap">
         <div className="grow">
-          <h1>Audit log</h1>
+          <h2 style={{ margin: 0 }}>Audit log</h2>
           <div className="muted small">
             Every query run through the workbench, recorded before it reaches Salesforce. Salesforce runs each one as the
             user who connected; the org and user ids below come from their token.
@@ -86,6 +90,6 @@ export function AuditPage() {
       {log.hasNextPage && (
         <div><button onClick={() => void log.fetchNextPage()} disabled={log.isFetchingNextPage}>Load older</button></div>
       )}
-    </div>
+    </>
   );
 }
