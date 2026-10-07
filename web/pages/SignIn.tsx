@@ -53,8 +53,7 @@ export function SignIn({ session }: { session: SessionInfo }) {
           Data 360 Workbench
         </div>
         <p className="muted" style={{ margin: 0 }}>
-          Sign in to the workbench first; you connect to a Salesforce org on the next step. Every query you run is
-          recorded against your account.
+          Sign in to the workbench first; you connect to a Salesforce org on the next step.
         </p>
         {error && <div className="alert error" role="alert">{error}</div>}
         {session.providers.map((p) => (
