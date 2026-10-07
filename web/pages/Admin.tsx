@@ -3,9 +3,8 @@ import { useState } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { api, type LoginEvent } from '../api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { creditsFor, fmtCredits, fmtMoney, fmtRows } from '@shared/credits';
+import { QUERY_CREDITS_PER_MILLION, creditsFor, fmtEstCredits, fmtRows } from '@shared/estimate';
 import { fmtAgo, fmtNum } from '../lib/format';
-import { useRates } from '../lib/useRates';
 import { AuditPage } from './Audit';
 
 /** Admins only (AUTH_ADMIN_EMAILS): users, sign-ins, every query, and what admins did. */
@@ -273,18 +272,16 @@ function Actions() {
 function Usage() {
   const [days, setDays] = useState(30);
   const usage = useQuery({ queryKey: ['admin', 'usage', days], queryFn: () => api.admin.usage(days), staleTime: 0 });
-  const { rates, price, currency } = useRates();
   const rows = usage.data?.rows ?? [];
   const sum = (f: (r: (typeof rows)[number]) => number) => rows.reduce((n, r) => n + f(r), 0);
   const totalRuns = sum((r) => r.runs);
   const totalEstimated = sum((r) => r.estimatedRuns);
-  const totalCredits = creditsFor(sum((r) => r.estRows), rates.query);
-  const cost = (credits: number) => (price ? fmtMoney(credits * price, currency) : '');
+  const totalCredits = creditsFor(sum((r) => r.estRows));
   return (
     <>
       <div className="row wrap">
         <div className="muted small grow">
-          Query reads this workbench estimated, by person and org, at {rates.query} credits per million rows. It counts only queries run here:
+          Query reads this workbench estimated, by person and org, at {QUERY_CREDITS_PER_MILLION} credits per million rows (the base Flex rate). It counts only queries run here:
           ingestion, unification, segmentation and activation are not visible to it, and Salesforce reports no credit figures, so reconcile
           against Salesforce's own usage reports.
         </div>
@@ -302,7 +299,7 @@ function Usage() {
       {rows.length > 0 && (
         <>
           <div className="card">
-            <b>{fmtCredits(totalCredits)} estimated credits</b>{price ? ` (${cost(totalCredits)})` : ''} from {fmtNum(totalRuns)} queries in the last {days} days.{' '}
+            <b>{fmtEstCredits(totalCredits)} estimated credits</b> from {fmtNum(totalRuns)} queries in the last {days} days.{' '}
             <span className="muted small">
               {fmtNum(totalEstimated)} of them carried an estimate; the rest read objects nobody had counted yet, so this is a floor.
             </span>
@@ -312,12 +309,12 @@ function Usage() {
               <thead>
                 <tr>
                   <th>Person</th><th>Org</th><th style={{ textAlign: 'right' }}>Queries</th><th style={{ textAlign: 'right' }}>With estimate</th>
-                  <th style={{ textAlign: 'right' }}>Est. rows read</th><th style={{ textAlign: 'right' }}>Est. credits</th>{price ? <th style={{ textAlign: 'right' }}>Est. cost</th> : null}
+                  <th style={{ textAlign: 'right' }}>Est. rows read</th><th style={{ textAlign: 'right' }}>Est. credits</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => {
-                  const credits = creditsFor(r.estRows, rates.query);
+                  const credits = creditsFor(r.estRows);
                   return (
                     <tr key={`${r.userEmail}|${r.instanceHost}`}>
                       <td>{r.userEmail}</td>
@@ -325,8 +322,7 @@ function Usage() {
                       <td style={{ textAlign: 'right' }}>{fmtNum(r.runs)}</td>
                       <td style={{ textAlign: 'right' }} title={r.partialRuns ? `${r.partialRuns} of these are lower bounds` : undefined}>{fmtNum(r.estimatedRuns)}{r.partialRuns ? '*' : ''}</td>
                       <td style={{ textAlign: 'right' }}>{fmtRows(r.estRows)}</td>
-                      <td style={{ textAlign: 'right' }}>{fmtCredits(credits)}</td>
-                      {price ? <td style={{ textAlign: 'right' }}>{cost(credits)}</td> : null}
+                      <td style={{ textAlign: 'right' }}>{fmtEstCredits(credits)}</td>
                     </tr>
                   );
                 })}

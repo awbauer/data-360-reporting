@@ -55,3 +55,32 @@ export function estimateScan(
 
 /** A profile runs `batches` queries, each reading the whole object. */
 export const profileRows = (objectRows: number, batches: number): number => objectRows * batches;
+
+/**
+ * Credits per million rows scanned by a query: the base-tier Flex multiplier for Data 360 Queries.
+ * Kept as a literal so the rate cards stay out of the main bundle; tests/estimate.test.ts checks it
+ * against them. Flex tiers lower this rate as a month's usage grows, so it is an upper bound.
+ */
+export const QUERY_CREDITS_PER_MILLION = 3;
+
+export const creditsFor = (rows: number, creditsPerMillionRows: number = QUERY_CREDITS_PER_MILLION): number =>
+  (rows / 1_000_000) * creditsPerMillionRows;
+
+/** Credits for display: small amounts are shown as "<0.01" rather than rounded to nothing. */
+export function fmtEstCredits(c: number): string {
+  if (!Number.isFinite(c)) return '–';
+  if (c === 0) return '0';
+  if (c < 0.01) return '<0.01';
+  if (c < 10) return c.toFixed(2).replace(/\.?0+$/, '');
+  if (c < 1000) return c.toFixed(1).replace(/\.0$/, '');
+  if (c < 1_000_000) return Math.round(c).toLocaleString('en-US');
+  return `${(c / 1_000_000).toFixed(c < 10_000_000 ? 2 : 1).replace(/\.?0+$/, '')}M`;
+}
+
+/** "1.2M", "850K", "42". */
+export function fmtRows(n: number): string {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  if (n >= 10_000) return `${Math.round(n / 1000)}K`;
+  return n.toLocaleString('en-US');
+}

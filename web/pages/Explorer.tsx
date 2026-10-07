@@ -11,10 +11,9 @@ import { RelationshipMap } from '../components/RelationshipMap';
 import { useWorkbench } from '../context';
 import { fmtAgo, fmtNum, fmtPct } from '../lib/format';
 import { countCache, profileCache } from '../lib/storage';
-import { creditsFor, fmtCredits, fmtMoney, fmtRows } from '@shared/credits';
+import { creditsFor, fmtEstCredits, fmtRows } from '@shared/estimate';
 import { profileRows } from '@shared/estimate';
 import { exampleCost } from '../lib/estimateText';
-import { useRates } from '../lib/useRates';
 import { isLinearType } from '@shared/histogram';
 
 const KIND_LABEL: Record<ObjectKind, string> = { dmo: 'DMO', dlo: 'DLO', ci: 'CI' };
@@ -103,7 +102,6 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
   const [open, setOpen] = useState<Set<string>>(() => new Set());
 
   const batches = useMemo(() => buildProfileBatches(obj), [obj]);
-  const { rates, price, currency } = useRates();
   const openInEditor = (sql: string, autorun: boolean) => nav('/query', { state: { sql, dataspace: ds, autorun } });
 
   const countRows = async () => {
@@ -295,8 +293,8 @@ function ObjectBody({ obj, host, nav }: { obj: ObjectMeta; host: string; nav: Re
         </p>
         <p className="small muted" style={{ margin: 0 }}>
           {count
-            ? `${fmtRows(count.rows)} rows × ${batches.length} ${batches.length === 1 ? 'query' : 'queries'}: roughly ${fmtCredits(creditsFor(profileRows(count.rows, batches.length), rates.query))} credits${price ? ` (${fmtMoney(creditsFor(profileRows(count.rows, batches.length), rates.query) * price, currency)})` : ''}.`
-            : `${exampleCost({ rate: rates.query, price, currency })}, once per query. This object hasn't been counted, so its size is unknown.`}{' '}
+            ? `${fmtRows(count.rows)} rows × ${batches.length} ${batches.length === 1 ? 'query' : 'queries'}: roughly ${fmtEstCredits(creditsFor(profileRows(count.rows, batches.length)))} credits.`
+            : `${exampleCost()}, once per query. This object hasn't been counted, so its size is unknown.`}{' '}
           An estimate: Salesforce reports no credit usage.
         </p>
       </ConfirmDialog>

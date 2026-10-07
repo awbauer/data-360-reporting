@@ -177,7 +177,7 @@ function QueryTab({ tab, active, autorun, onAutoran, onChange }: TabProps) {
 
   // The server records every run (History reads it back), so nothing to store here.
   const runner = useQueryRunner();
-  const { estimate, view: rateView } = useScanEstimate(sql);
+  const { estimate } = useScanEstimate(sql);
   const { state } = runner;
 
   // Seed a starter query once, when the tab opens empty and metadata arrives. Never again:
@@ -330,7 +330,7 @@ function QueryTab({ tab, active, autorun, onAutoran, onChange }: TabProps) {
           {canMore && <button className="link" onClick={() => void runner.loadMore()} disabled={state.loadingMore}>{state.loadingMore ? 'Loading…' : 'Load more rows'}</button>}
           {state.phase === 'done' && state.rows.length >= MAX_IN_MEMORY && state.rows.length < state.rowCount && <span>Display capped at {fmtNum(MAX_IN_MEMORY)} rows. Export CSV for the rest.</span>}
           <div className="grow" />
-          {estimate && <EstimateChip estimate={estimate} view={rateView} />}
+          {estimate && <EstimateChip estimate={estimate} />}
           {hasRows && (
             <span className="seg" role="group" aria-label="Result view">
               <button type="button" aria-pressed={view === 'table'} onClick={() => setView('table')}>Table</button>
@@ -376,7 +376,7 @@ function QueryTab({ tab, active, autorun, onAutoran, onChange }: TabProps) {
             ))}
           </ul>
         )}
-        {estimate && <p className="small muted" style={{ margin: 0 }}>{scanLong(estimate, rateView)}</p>}
+        {estimate && <p className="small muted" style={{ margin: 0 }}>{scanLong(estimate)}</p>}
         <label style={{ flexDirection: 'row', alignItems: 'center', gap: 8, color: 'var(--text)', fontSize: 13 }}>
           <input type="checkbox" checked={skipNext} onChange={(e) => setSkipNext(e.target.checked)} style={{ width: 'auto' }} />
           Don't ask again in this browser session

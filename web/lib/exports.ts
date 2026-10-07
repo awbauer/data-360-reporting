@@ -1,5 +1,4 @@
-import { effectiveRates, type RateOverrides } from '@shared/credits';
-import { planTables, summarizePlan, type Plan, type PlanContext } from '@shared/plan';
+import type { CreditPlan } from '@shared/credits';
 import type { CachedStats, ReportContext } from '@shared/report';
 import type { Extras, ObjectMeta } from '@shared/types';
 import { countCache, profileCache } from './storage';
@@ -52,6 +51,18 @@ export async function exportDictionary(format: DictionaryFormat, objects: Object
   save(zipSync(files) as Uint8Array<ArrayBuffer>, 'application/zip', `${base}_csv.zip`);
 }
 
+export type PlanFormat = 'xlsx' | 'md';
+
+export async function exportPlan(format: PlanFormat, plan: CreditPlan, at = new Date()): Promise<void> {
+  const report = await import('@shared/credits-report');
+  const tables = report.planTables(plan, at);
+  const base = `credit-estimate_${slug(plan.client ? `${plan.client}-${plan.name}` : plan.name) || 'plan'}_${at.toISOString().slice(0, 10)}`;
+  if (format === 'md') return save(report.planMarkdown(tables), 'text/markdown;charset=utf-8', `${base}.md`);
+  const { buildXlsx } = await import('@shared/xlsx');
+  const bytes = buildXlsx(tables.map((t) => ({ name: t.title, header: t.header, rows: t.rows })));
+  save(bytes as Uint8Array<ArrayBuffer>, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', `${base}.xlsx`);
+}
+
 export async function exportHealth(
   format: HealthFormat,
   input: { objects: ObjectMeta[]; warnings: string[]; extras: Extras | null; extrasError?: string },
@@ -65,20 +76,3 @@ export async function exportHealth(
 }
 
 /** The credit plan as a workbook (one sheet per table) or Markdown, with every assumption written down. */
-export async function exportPlan(
-  format: 'xlsx' | 'md',
-  plan: Plan,
-  overrides: RateOverrides,
-  ctx: PlanContext,
-): Promise<void> {
-  const rates = effectiveRates(overrides);
-  const tables = planTables(plan, summarizePlan(plan, rates), rates, overrides, ctx);
-  const base = `credit-plan_${slug(ctx.host ?? 'no-org')}_${ctx.at.toISOString().slice(0, 10)}`;
-  if (format === 'md') {
-    const { tablesToMarkdown } = await import('@shared/report');
-    return save(tablesToMarkdown(plan.name, tables), 'text/markdown;charset=utf-8', `${base}.md`);
-  }
-  const { buildXlsx } = await import('@shared/xlsx');
-  const bytes = buildXlsx(tables.map((t) => ({ name: t.title.slice(0, 31), header: t.header, rows: t.rows })));
-  save(bytes as Uint8Array<ArrayBuffer>, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', `${base}.xlsx`);
-}

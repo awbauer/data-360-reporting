@@ -1,9 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
-import { creditsFor, fmtCredits } from '@shared/credits';
+import { creditsFor, fmtEstCredits } from '@shared/estimate';
 import { fmtAgo, fmtMs, fmtNum } from '../lib/format';
-import { useRates } from '../lib/useRates';
 import type { QueryNavState } from './Query';
 
 export function HistoryPage() {
@@ -15,7 +14,6 @@ export function HistoryPage() {
     onSuccess: () => qc.setQueryData(['history'], []),
   });
   const list = items.data ?? [];
-  const { rates } = useRates();
 
   return (
     <div className="page">
@@ -41,7 +39,7 @@ export function HistoryPage() {
                 {h.elapsedMs !== null && <> · {fmtMs(h.elapsedMs)}</>}
                 {h.estRows !== null && (
                   <span title="Estimated from cached row counts when it ran, at your current rate. Not a measurement.">
-                    {' '}· est. {h.estComplete ? '≈' : '≥'} {fmtCredits(creditsFor(h.estRows, rates.query))} credits
+                    {' '}· est. {h.estComplete ? '≈' : '≥'} {fmtEstCredits(creditsFor(h.estRows))} credits
                   </span>
                 )}
                 {h.status !== 'done' && <> · <span style={h.status === 'failed' ? { color: 'var(--bad)' } : undefined}>{h.status}</span></>}

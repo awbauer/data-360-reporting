@@ -214,7 +214,7 @@ export function Connect({ session }: { session: SessionInfo }) {
           {session.mock ? 'Start with sample data' : busy ? 'Connecting…' : saved ? `Connect to ${saved.label}` : 'Connect to Salesforce'}
         </button>
         <div className="small muted" style={{ textAlign: 'center' }}>
-          Sizing a project that isn't in an org yet? <Link to="/plan">Plan credit consumption without connecting</Link>
+          No org yet? <Link to="/credits">Estimate Data 360 credits</Link> without connecting one.
         </div>
       </form>
     </div>

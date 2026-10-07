@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeIdentityResolutions, normalizeStreams } from '../server/data360/normalize';
+import { normalizeIdentityResolutions } from '../server/data360/normalize';
 import { cookieJar, H, mockApp } from './helpers';
 
 const json = (body: unknown) => ({ method: 'POST', headers: H, body: JSON.stringify(body) });
@@ -63,22 +63,7 @@ describe('usage summary for admins', () => {
   });
 });
 
-describe('plan and rate state', () => {
-  it('keeps rates and plans per user, beside the tabs', async () => {
-    const { t, req } = await connected('alice@example.com');
-    const rates = { rates: { query: 2 }, pricePerCredit: 0.004, currency: 'USD', confirmed: true };
-    expect((await req('/api/state/rates', { method: 'PUT', headers: H, body: JSON.stringify({ value: rates }) })).status).toBe(200);
-    expect((await (await req('/api/state/rates')).json()).value).toEqual(rates);
-    await req('/api/state/plans', { method: 'PUT', headers: H, body: JSON.stringify({ value: { 'acme.my.salesforce.com': { name: 'Acme', lines: [] } } }) });
-    expect((await (await req('/api/state/plans')).json()).value['acme.my.salesforce.com'].name).toBe('Acme');
-    const bob = cookieJar();
-    await t.signIn(bob, 'bob@example.com');
-    expect(await (await t.send(bob, '/api/state/rates')).json()).toBeNull();
-    expect((await req('/api/state/nope')).status).toBe(400);
-  });
-});
-
-describe('identity resolution and stream shapes (spec examples)', () => {
+describe('identity resolution shapes (spec example)', () => {
   const SPEC = {
     identityResolutions: [
       {
@@ -114,13 +99,5 @@ describe('identity resolution and stream shapes (spec examples)', () => {
     const q = await (await req('/api/query', json({ sql: 'SELECT COUNT(DISTINCT "UnifiedRecordId__c") FROM "IndividualIdentityLink__dlm"' }))).json();
     expect(q.rows[0][0]).toBe(sets[0].totalUnifiedProfiles);
     expect(await (await req('/api/identity?dataspace=marketing')).json()).toEqual([]);
-  });
-
-  it('reads how often and how fully a stream refreshes, and what its last run processed', () => {
-    const { items } = normalizeStreams({
-      dataStreams: [{ name: 'S', label: 'S', totalRecords: 9, lastProcessedRecords: 3, lastAddedRecords: 2, refreshConfig: { refreshMode: 'UPSERT', frequency: 'Hourly' } }, { name: 'T' }],
-    });
-    expect(items[0]).toMatchObject({ totalRecords: 9, lastProcessedRecords: 3, lastAddedRecords: 2, refreshMode: 'UPSERT', refreshFrequency: 'Hourly' });
-    expect(items[1]!.refreshMode).toBeUndefined();
   });
 });

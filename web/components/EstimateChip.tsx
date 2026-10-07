@@ -1,11 +1,11 @@
 import type { ScanEstimate } from '@shared/estimate';
-import { scanLong, scanShort, type RateView } from '../lib/estimateText';
+import { scanLong, scanShort } from '../lib/estimateText';
 
 /** A short, honest cost hint beside the editor. The tooltip carries the assumptions. */
-export function EstimateChip({ estimate, view }: { estimate: ScanEstimate; view: RateView }) {
+export function EstimateChip({ estimate }: { estimate: ScanEstimate }) {
   return (
-    <span className="est" title={scanLong(estimate, view)} aria-label={`Estimated cost: ${scanLong(estimate, view)}`}>
-      est. {scanShort(estimate, view)}
+    <span className="est" title={scanLong(estimate)} aria-label={`Estimated cost: ${scanLong(estimate)}`}>
+      est. {scanShort(estimate)}
     </span>
   );
 }

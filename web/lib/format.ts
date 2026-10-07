@@ -18,6 +18,19 @@ export function fmtMs(ms: number): string {
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
+/** Whole credits, with up to two decimals for small amounts (a 1M-row query is 3 credits). */
+export function fmtCredits(x: number): string {
+  return Math.abs(x) >= 100 ? nf.format(Math.round(x)) : new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(x);
+}
+
+export function fmtMoney(x: number, currency = 'USD'): string {
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(x);
+  } catch {
+    return `${nf.format(Math.round(x))} ${currency}`;
+  }
+}
+
 export function fmtPct(x: number): string {
   return `${(x * 100).toFixed(x > 0 && x < 0.01 ? 2 : 1)}%`;
 }

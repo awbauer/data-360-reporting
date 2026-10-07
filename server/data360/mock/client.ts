@@ -175,9 +175,15 @@ export function createMockClient(): Data360Client {
 
     async getExtras(dataspace): Promise<Extras> {
       const streams = [
-        { name: 'Salesforce_CRM_Contact', label: 'Salesforce CRM Contact', status: 'ACTIVE', lastRunStatus: 'SUCCESS', lastRefreshDate: '2026-10-05T04:10:00Z', totalRecords: 2500, lastProcessedRecords: 2500, lastAddedRecords: 40, refreshMode: 'UPSERT', refreshFrequency: 'Daily', dataLakeObject: 'Contact_Home__dll' },
-        { name: 'Web_SDK_Events', label: 'Web SDK Events', status: 'ACTIVE', lastRunStatus: 'SUCCESS', lastRefreshDate: '2026-10-06T01:00:00Z', totalRecords: 5000, lastProcessedRecords: 120, refreshMode: 'INCREMENTAL', refreshFrequency: 'Hourly' },
-        { name: 'Ecommerce_Orders', label: 'Ecommerce Orders', status: 'ACTIVE', lastRunStatus: 'FAILED', lastRefreshDate: '2026-10-03T22:30:00Z', totalRecords: 1200, refreshMode: 'TOTAL_REPLACE', refreshFrequency: 'Weekly' },
+        {
+          name: 'Salesforce_CRM_Contact', label: 'Salesforce CRM Contact', status: 'ACTIVE', lastRunStatus: 'SUCCESS', lastRefreshDate: '2026-10-05T04:10:00Z',
+          totalRecords: 2500, dataLakeObject: 'Contact_Home__dll', connectorType: 'SalesforceDotCom', refreshMode: 'UPSERT', refreshFrequency: 'HOURLY',
+        },
+        { name: 'Web_SDK_Events', label: 'Web SDK Events', status: 'ACTIVE', lastRunStatus: 'SUCCESS', lastRefreshDate: '2026-10-06T01:00:00Z', totalRecords: 5000, connectorType: 'Website' },
+        {
+          name: 'Ecommerce_Orders', label: 'Ecommerce Orders', status: 'ACTIVE', lastRunStatus: 'FAILED', lastRefreshDate: '2026-10-03T22:30:00Z',
+          totalRecords: 1200, connectorType: 'S3', refreshMode: 'FULL_REFRESH', refreshFrequency: 'DAILY', lastRunRecords: 1200,
+        },
       ];
       const segments = [
         {

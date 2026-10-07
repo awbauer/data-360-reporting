@@ -19,6 +19,11 @@ interface Workbench {
 
 const Ctx = createContext<Workbench | null>(null);
 
+/** The workbench when an org is connected; null on pages that also work without one. */
+export function useOptionalWorkbench(): Workbench | null {
+  return useContext(Ctx);
+}
+
 export function useWorkbench(): Workbench {
   const v = useContext(Ctx);
   if (!v) throw new Error('useWorkbench outside provider');

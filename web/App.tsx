@@ -11,12 +11,12 @@ import { Explorer } from './pages/Explorer';
 import { HistoryPage } from './pages/History';
 import { LibraryPage } from './pages/Library';
 import { Overview } from './pages/Overview';
-import { PlanConnected, PlanPage } from './pages/Plan';
 import { SegmentsPage } from './pages/Segments';
 import { NotAllowed, SignIn } from './pages/SignIn';
 
 // The editor pulls in CodeMirror, so load it only when the Query page is opened.
 const QueryPage = lazy(() => import('./pages/Query').then((m) => ({ default: m.QueryPage })));
+const CreditsPage = lazy(() => import('./pages/Credits').then((m) => ({ default: m.CreditsPage })));
 
 export function App() {
   const session = useQuery({ queryKey: ['session'], queryFn: api.session, staleTime: Infinity, retry: 1 });
@@ -27,10 +27,10 @@ export function App() {
   if (!s.user) return <SignIn session={s} />;
   if (!s.user.allowed || s.user.blocked) return <NotAllowed session={s} />;
   if (!s.connected) {
-    // The planner needs no Salesforce connection: a consultant sizing a prospect has none to make.
+    // Credit plans don't need an org: an estimate often comes before the org exists.
     return (
       <Routes>
-        <Route path="/plan" element={<StandalonePlan session={s} />} />
+        <Route path="/credits/:id?" element={<Standalone session={s} />} />
         <Route path="*" element={<Connect session={s} />} />
       </Routes>
     );
@@ -42,19 +42,25 @@ export function App() {
   );
 }
 
-function StandalonePlan({ session }: { session: SessionInfo }) {
+/** The Credits page on its own, for someone signed in to the workbench but not to an org. */
+function Standalone({ session }: { session: SessionInfo }) {
   return (
     <div className="shell">
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark" aria-hidden />
-          Data 360 Workbench
+          <span className="brand-name">Data 360 Workbench</span>
         </div>
-        <Link to="/">← Connect to an org</Link>
+        <nav className="nav" aria-label="Primary">
+          <NavLink to="/credits">Credits</NavLink>
+        </nav>
         <div className="grow" />
+        <Link className="button" to="/">Connect an org</Link>
         <UserMenu session={session} />
       </header>
-      <main className="main"><PlanPage org={null} /></main>
+      <main className="main flush">
+        <Suspense fallback={<div className="hint">Loading…</div>}><CreditsPage /></Suspense>
+      </main>
     </div>
   );
 }
@@ -75,21 +81,21 @@ function Shell() {
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark" aria-hidden />
-          Data 360 Workbench
+          <span className="brand-name">Data 360 Workbench</span>
         </div>
         <nav className="nav" aria-label="Primary">
           <NavLink to="/overview">Overview</NavLink>
           <NavLink to="/explorer">Explorer</NavLink>
           <NavLink to="/segments">Segments</NavLink>
           <NavLink to="/query">Query</NavLink>
-          <NavLink to="/plan">Plan</NavLink>
           <NavLink to="/library">Library</NavLink>
           <NavLink to="/history">History</NavLink>
+          <NavLink to="/credits">Credits</NavLink>
           {wb.session.user?.admin && <NavLink to="/admin">Admin</NavLink>}
         </nav>
         <div className="grow" />
         <label className="row small" style={{ flexDirection: 'row', alignItems: 'center' }}>
-          Data space
+          <span className="ds-caption">Data space</span>
           <select value={wb.dataspace} onChange={(e) => wb.setDataspace(e.target.value)} aria-label="Data space">
             {wb.dataspaces.map((d) => (
               <option key={d.name} value={d.name}>
@@ -98,7 +104,7 @@ function Shell() {
             ))}
           </select>
         </label>
-        <span className="badge" title="Connected org">{wb.session.instanceHost}</span>
+        <span className="badge host" title={`Connected org: ${wb.session.instanceHost}`}>{wb.session.instanceHost}</span>
         {wb.session.mock && <span className="badge mock">mock data</span>}
         <button onClick={disconnect} title="Disconnect from this Salesforce org">Disconnect</button>
         <UserMenu session={wb.session} />
@@ -109,9 +115,9 @@ function Shell() {
         <Route path="/explorer/*" element={<main className="main flush"><Explorer /></main>} />
         <Route path="/segments" element={<main className="main"><SegmentsPage /></main>} />
         <Route path="/query" element={<main className="main flush"><Suspense fallback={<div className="hint">Loading editor…</div>}><QueryPage /></Suspense></main>} />
-        <Route path="/plan" element={<main className="main"><PlanConnected /></main>} />
         <Route path="/library" element={<main className="main"><LibraryPage /></main>} />
         <Route path="/history" element={<main className="main"><HistoryPage /></main>} />
+        <Route path="/credits/:id?" element={<main className="main flush"><Suspense fallback={<div className="hint">Loading…</div>}><CreditsPage /></Suspense></main>} />
         {wb.session.user?.admin && <Route path="/admin/*" element={<main className="main"><AdminPage /></main>} />}
         {wb.session.user?.admin && <Route path="/audit" element={<Navigate to="/admin/queries" replace />} />}
         <Route path="*" element={<Navigate to="/overview" replace />} />

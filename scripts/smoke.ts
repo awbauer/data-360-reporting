@@ -144,9 +144,10 @@ await step(`Data streams and segments (${dataspace})`, async () => {
   const streams = x.dataStreams?.items ?? [];
   const segments = x.segments?.items ?? [];
   console.log(`   streams naming their DLO: ${streams.filter((s) => s.dataLakeObject).length}/${streams.length}`);
-  // The credit planner reads these; if a field is absent, its line falls back to a total or to zero.
-  console.log(`   planner inputs on streams: lastProcessedRecords=${streams.filter((s) => s.lastProcessedRecords != null).length} lastAddedRecords=${streams.filter((s) => s.lastAddedRecords != null).length} refreshFrequency=${streams.filter((s) => s.refreshFrequency).length}/${streams.length}`);
-  console.log(`   planner inputs on segments: publishInterval=${segments.filter((s) => s.publishInterval).length}/${segments.length}`);
+  // Credit seeding reads these; each is a guess at the key name until a real org confirms it.
+  const has = (k: 'connectorType' | 'refreshMode' | 'refreshFrequency' | 'lastRunRecords') => `${streams.filter((s) => s[k] !== undefined).length}/${streams.length}`;
+  console.log(`   streams with connectorType ${has('connectorType')}, refreshMode ${has('refreshMode')}, refreshFrequency ${has('refreshFrequency')}, lastRunRecords ${has('lastRunRecords')}`);
+  console.log(`   connector types: ${[...new Set(streams.map((s) => s.connectorType ?? '?'))].join(', ')}; refresh modes: ${[...new Set(streams.map((s) => s.refreshMode ?? '?'))].join(', ')}`);
   console.log(`   segments with include criteria: ${segments.filter((s) => s.includeCriteria).length}/${segments.length}; with exclude: ${segments.filter((s) => s.excludeCriteria).length}`);
   const sample = segments.find((s) => s.includeCriteria)?.includeCriteria;
   if (sample) console.log(`   include criteria is ${(() => { try { return `JSON ${shapeDeep(JSON.parse(sample))}`; } catch { return 'not JSON'; } })()}`);

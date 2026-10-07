@@ -149,11 +149,8 @@ export function normalizeStreams(body: unknown): { items: StreamInfo[]; totalSiz
         ...(optStr(o.lastRunStatus) ? { lastRunStatus: str(o.lastRunStatus) } : {}),
         ...(optStr(o.lastRefreshDate) ? { lastRefreshDate: str(o.lastRefreshDate) } : {}),
         ...(optNum(o.totalRecords) !== undefined ? { totalRecords: optNum(o.totalRecords) } : {}),
-        ...(optNum(o.lastProcessedRecords) !== undefined ? { lastProcessedRecords: optNum(o.lastProcessedRecords) } : {}),
-        ...(optNum(o.lastAddedRecords) !== undefined ? { lastAddedRecords: optNum(o.lastAddedRecords) } : {}),
-        ...(optStr(obj(o.refreshConfig).refreshMode) ? { refreshMode: str(obj(o.refreshConfig).refreshMode) } : {}),
-        ...(optStr(obj(o.refreshConfig).frequency) ? { refreshFrequency: str(obj(o.refreshConfig).frequency) } : {}),
         ...(streamDlo(o) ? { dataLakeObject: streamDlo(o) } : {}),
+        ...streamRefresh(o),
       };
     }),
   };
@@ -171,6 +168,23 @@ const pick = (o: Json, ...keys: string[]): string | undefined => {
 /** Criteria may arrive as a string (escaped JSON) or as an object; keep it as text either way. */
 const asText = (v: unknown): string | undefined =>
   typeof v === 'string' ? v || undefined : v && typeof v === 'object' ? JSON.stringify(v) : undefined;
+
+/** Connector and refresh settings, under the keys the spec suggests (unconfirmed on a real org). */
+function streamRefresh(o: Json): Pick<StreamInfo, 'connectorType' | 'refreshMode' | 'refreshFrequency' | 'lastRunRecords'> {
+  const connector = obj(o.connectorInfo);
+  const refresh = obj(o.refreshConfig);
+  const frequency = obj(refresh.frequency ?? o.frequency);
+  const connectorType = pick(connector, 'connectorType', 'type') ?? pick(o, 'connectorType', 'sourceType');
+  const refreshMode = pick(refresh, 'refreshMode', 'mode') ?? pick(o, 'refreshMode', 'dataStreamRefreshMode');
+  const refreshFrequency = pick(frequency, 'frequencyType', 'type') ?? pick(refresh, 'frequency') ?? pick(o, 'refreshFrequency');
+  const lastRunRecords = optNum(o.lastNumberOfRowsAddedCount) ?? optNum(o.lastProcessedRecords) ?? optNum(o.lastRunRecordsProcessed);
+  return {
+    ...(connectorType ? { connectorType } : {}),
+    ...(refreshMode ? { refreshMode } : {}),
+    ...(refreshFrequency ? { refreshFrequency } : {}),
+    ...(lastRunRecords !== undefined ? { lastRunRecords } : {}),
+  };
+}
 
 function streamDlo(o: Json): string | undefined {
   const info = obj(o.dataLakeObjectInfo);

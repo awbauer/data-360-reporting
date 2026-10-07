@@ -2,9 +2,8 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, type AuditEntry } from '../api';
-import { creditsFor, fmtCredits } from '@shared/credits';
+import { creditsFor, fmtEstCredits } from '@shared/estimate';
 import { fmtMs, fmtNum } from '../lib/format';
-import { useRates } from '../lib/useRates';
 
 const PAGE = 200;
 
@@ -26,9 +25,8 @@ export function AuditPage() {
     staleTime: 0,
   });
   const rows = log.data?.pages.flat() ?? [];
-  const { rates } = useRates();
   const estimated = rows.filter((r) => r.estRows !== null);
-  const totalCredits = creditsFor(estimated.reduce((n, r) => n + (r.estRows ?? 0), 0), rates.query);
+  const totalCredits = creditsFor(estimated.reduce((n, r) => n + (r.estRows ?? 0), 0));
 
   return (
     <>
@@ -55,7 +53,7 @@ export function AuditPage() {
       </form>
       {rows.length > 0 && (
         <div className="small muted">
-          {rows.length} runs shown; {estimated.length} carried a cost estimate, about {fmtCredits(totalCredits)} credits in total
+          {rows.length} runs shown; {estimated.length} carried a cost estimate, about {fmtEstCredits(totalCredits)} credits in total
           {estimated.some((r) => r.estComplete === false) ? ' (at least: some estimates are lower bounds)' : ''}. Estimated by the workbench from row
           counts, not reported by Salesforce.
         </div>
@@ -84,7 +82,7 @@ export function AuditPage() {
                   <td style={{ textAlign: 'right' }}>{r.rowCount === null ? '' : fmtNum(r.rowCount)}</td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{r.finishedAt ? fmtMs(r.finishedAt - r.startedAt) : ''}</td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    {r.estRows === null ? <span className="muted">–</span> : `${r.estComplete ? '' : '≥ '}${fmtCredits(creditsFor(r.estRows, rates.query))}`}
+                    {r.estRows === null ? <span className="muted">–</span> : `${r.estComplete ? '' : '≥ '}${fmtEstCredits(creditsFor(r.estRows))}`}
                   </td>
                   <td style={{ maxWidth: 480 }}>
                     <button className="link" onClick={() => setOpen(open === r.id ? null : r.id)} aria-expanded={open === r.id}>

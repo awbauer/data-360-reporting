@@ -1,3 +1,4 @@
+import type { CreditPlan } from '@shared/credits';
 import type { DataSpace, Extras, IdentityRuleset, InsightDefinition, MappingResult, ObjectMeta, ParamDef, QueryChunk, QueryColumn, QueryResponse } from '@shared/types';
 
 export class ApiError extends Error {
@@ -113,6 +114,21 @@ export interface UsageRow {
   lastAt: number;
 }
 
+export interface PlanSummary {
+  id: string;
+  name: string;
+  client: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface StoredPlan {
+  id: string;
+  plan: CreditPlan;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface AdminBlock {
   reason: string | null;
   blockedBy: string;
@@ -210,7 +226,7 @@ export interface RunInput {
 
 const enc = encodeURIComponent;
 
-export type StateKey = 'tabs' | 'rates' | 'plans';
+export type StateKey = 'tabs';
 
 /** App sign-in, served by Better Auth under /api/auth. */
 export const appAuth = {
@@ -262,6 +278,16 @@ export const api = {
     },
     actions: () => request<AdminAction[]>('/api/admin/actions'),
     usage: (days: number) => request<{ days: number; rows: UsageRow[] }>(`/api/admin/usage?days=${days}`),
+  },
+  /** Credit plans: per user, and available before any org is connected. */
+  plans: {
+    list: () => request<PlanSummary[]>('/api/plans'),
+    get: (id: string) => request<StoredPlan>(`/api/plans/${enc(id)}`),
+    create: (plan: CreditPlan) => request<{ id: string; createdAt: number; updatedAt: number }>('/api/plans', { method: 'POST', json: { plan } }),
+    /** Refused with 409 `conflict` if the plan was saved elsewhere since `baseUpdatedAt`. */
+    save: (id: string, plan: CreditPlan, baseUpdatedAt: number) =>
+      request<{ updatedAt: number }>(`/api/plans/${enc(id)}`, { method: 'PUT', json: { plan, baseUpdatedAt } }),
+    remove: (id: string) => request<{ ok: true }>(`/api/plans/${enc(id)}`, { method: 'DELETE' }),
   },
   getState: <T>(key: StateKey) => request<{ value: T; updatedAt: number } | null>(`/api/state/${key}`),
   putState: (key: StateKey, value: unknown) => request<{ ok: true }>(`/api/state/${key}`, { method: 'PUT', json: { value } }),

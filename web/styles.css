@@ -115,10 +115,19 @@ label > input, label > select, label > textarea { color: var(--text); font-size:
   display: flex; align-items: center; gap: 16px; padding: 8px 16px;
   background: var(--surface); border-bottom: 1px solid var(--border);
 }
-.brand { font-weight: 700; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px; }
+.brand { font-weight: 700; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px; white-space: nowrap; flex: none; }
 .brand-mark { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); display: inline-block; }
-.nav { display: flex; gap: 2px; }
-.nav a { padding: 6px 10px; border-radius: 6px; color: var(--muted); font-weight: 500; }
+/* When the bar is tight the nav scrolls sideways rather than widening the page. */
+.nav { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.nav a { padding: 6px 10px; border-radius: 6px; color: var(--muted); font-weight: 500; white-space: nowrap; }
+.topbar .badge, .topbar label, .topbar > button { white-space: nowrap; flex: none; }
+.topbar .badge.host { max-width: 210px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.user-menu { flex: none; white-space: nowrap; }
+@media (max-width: 1440px) {
+  .topbar { gap: 12px; }
+  .topbar .ds-caption, .topbar .brand-name, .topbar .user-email { display: none; }
+  .topbar .badge.host { max-width: 160px; }
+}
 .nav a:hover { background: var(--surface-2); text-decoration: none; }
 .nav a.active { background: var(--accent-soft); color: var(--accent); }
 .badge {
@@ -299,3 +308,36 @@ pre.sql { margin: 0; padding: 12px; background: var(--surface-2); border-radius:
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .seg button { border: 0; border-radius: 0; padding: 3px 10px; font-size: 12px; background: var(--surface); }
 .seg button[aria-pressed='true'] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.chart .ref-line { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.chart .ref-text { fill: var(--muted); font-size: 11px; font-weight: 600; }
+
+/* credit plans */
+.plan-head { gap: 8px; }
+.plan-name { font-size: 18px; font-weight: 700; border-color: transparent; background: transparent; padding: 4px 6px; min-width: 200px; }
+.plan-name:hover, .plan-name:focus { border-color: var(--border); background: var(--surface); }
+.save-state { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.save-state.conflict, .save-state.error { color: var(--bad); font-weight: 600; }
+.contract { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.contract input, .contract select { width: 100%; }
+.contract .row > select { width: auto; flex: none; }
+.tile.bad .num { color: var(--bad); }
+.act-table td { vertical-align: middle; }
+.act-table input, .act-table select { padding: 3px 6px; font-size: 13px; }
+.act-table th, .act-table td { padding-left: 8px; padding-right: 8px; }
+.act-table .act-label { width: 100%; min-width: 180px; font-weight: 600; }
+.act-table .act-kind { max-width: 230px; font-size: 12px; padding: 2px 4px; color: var(--muted); }
+input.q { width: 110px; text-align: right; }
+input.q.short { width: 70px; }
+input[aria-invalid='true'] { border-color: var(--bad); outline-color: var(--bad); }
+.act-more td { background: var(--surface-2); }
+.share { width: 80px; height: 4px; border-radius: 2px; background: var(--surface-2); margin: 3px 0 2px auto; overflow: hidden; }
+.share > i { display: block; height: 100%; background: var(--bar); }
+.lever { display: flex; gap: 14px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.lever:last-child { border-bottom: 0; }
+details.card > summary { list-style-position: inside; }
+dialog.wide { width: min(760px, calc(100vw - 32px)); }
+.seed-list { max-height: min(55vh, 520px); overflow: auto; display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+.seed-list label { flex-direction: row; align-items: flex-start; gap: 8px; color: var(--text); font-size: 13px; }
+.seed-list input[type='checkbox'] { margin-top: 3px; accent-color: var(--accent); flex: none; }
+.seed-head { padding-bottom: 4px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.seed-item { padding: 4px 0 4px 18px; }

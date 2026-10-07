@@ -5,7 +5,7 @@ import type { SegmentInfo } from '@shared/types';
 import { api } from '../api';
 import { useWorkbench } from '../context';
 import { fmtAgo, fmtNum } from '../lib/format';
-import { describePublishInterval } from '@shared/plan';
+import { describePublishInterval } from '@shared/schedule';
 import { prettyCriteria, resolveObject } from '../lib/names';
 
 /** Segments in the current data space with their rules, read-only. List data only: no query credits. */

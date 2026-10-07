@@ -12,6 +12,7 @@ import { authorizeUrl, exchangeCode, OAuthError, preflightAuthorize, revokeToken
 import { maskClientId, type RunRecord, type Store } from './store';
 import type { Block } from './admin-store';
 import { registerAdminRoutes } from './admin-routes';
+import { registerPlanRoutes } from './plan-routes';
 import { toCsvLine } from '../shared/csv';
 import { toSqlParameters } from '../shared/sql';
 import type { ParamDef, QueryResponse } from '../shared/types';
@@ -43,7 +44,7 @@ const TX_TTL = 600;
 const SAVED_TTL = 60 * 60 * 24 * 365 * 10;
 const MAX_SAVED_CREDENTIALS = 25;
 const MAX_STATE_BYTES = 512 * 1024;
-const STATE_KEYS = new Set(['tabs', 'rates', 'plans']);
+const STATE_KEYS = new Set(['tabs']);
 const DATASPACE_RE = /^[A-Za-z0-9_]{1,80}$/;
 const OBJECT_NAME_RE = /^[A-Za-z0-9_]{1,255}$/;
 const QUERY_ID_RE = /^[A-Za-z0-9%._~=+-]{1,512}$/;
@@ -327,6 +328,7 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
   });
 
   registerAdminRoutes(app, { config, store });
+  registerPlanRoutes(app, { store });
 
   app.get('/api/audit', async (c) => {
     if (!isAdmin(config, c.get('user')!)) return c.json({ error: 'forbidden', message: 'Admins only' }, 403);
