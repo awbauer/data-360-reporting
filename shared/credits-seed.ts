@@ -3,6 +3,7 @@
 // cached earlier, so it runs no queries. Every item says how its numbers were arrived at; most are
 // assumptions for the consultant to confirm, and the picker shows them before anything is added.
 import { DAILY, newItem, scheduleRuns, type ActivityKind, type PlanItem } from './credits';
+import { findObject } from './dmo-names';
 import { describePublishInterval } from './schedule';
 import type { Extras, InsightDefinition, ObjectMeta, StreamInfo } from './types';
 
@@ -98,8 +99,10 @@ export function seedCandidates(input: SeedInput): SeedCandidate[] {
 
   // Identity resolution: present when the org has unified individuals. Source profiles are the
   // individuals linked into them; only new or changed ones count after the first run.
-  if (objects.some((o) => /^UnifiedIndividual/i.test(o.name))) {
-    const src = ['IndividualIdentityLink__dlm', 'ssot__Individual__dlm'].find((x) => counts[x] && byName.has(x));
+  // Matched by key, so ssot__Individual__dlm and a standard Individual_std__dlm both count.
+  if (findObject(objects, 'unifiedindividual')) {
+    const src = [findObject(objects, 'individualidentitylink')?.name, findObject(objects, 'individual')?.name]
+      .find((x): x is string => Boolean(x && counts[x] && byName.has(x)));
     const rows = src ? counts[src]!.rows : 0;
     out.push({
       group: 'Identity resolution',

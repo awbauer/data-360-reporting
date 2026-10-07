@@ -4,7 +4,7 @@ import type { SqlDatabase } from './db';
 import type { ParamDef } from '../shared/types';
 
 export type RunStatus = 'running' | 'done' | 'failed' | 'cancelled';
-export type RunSource = 'editor' | 'explorer' | 'overview' | 'library';
+export type RunSource = 'editor' | 'explorer' | 'overview' | 'library' | 'credits';
 
 export interface RunRecord {
   id: string;

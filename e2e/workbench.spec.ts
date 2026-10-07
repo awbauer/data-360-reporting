@@ -30,7 +30,7 @@ test('sign in → connect → explore → query → library → admin → discon
   const status = panel(page).locator('.statusbar');
   const tile = (label: string) => page.locator('.tile', { hasText: label }).locator('.num');
   await expect(tile('Data model objects')).toHaveText('7');
-  await expect(tile('Data lake objects')).toHaveText('1');
+  await expect(tile('Data lake objects')).toHaveText('4'); // Contact Home and three Digital Wallet consumption feeds
   await expect(tile('Calculated insights')).toHaveText('1');
   await expect(page.getByRole('heading', { name: /Objects without relationships \(2\)/ })).toBeVisible(); // Account, Case
   await expect(tile('Data streams')).toHaveText('3');
@@ -40,10 +40,10 @@ test('sign in → connect → explore → query → library → admin → discon
 
   // Row counts only run after an explicit, confirmed action
   await expect(page.getByText('never started automatically')).toBeVisible();
-  await page.getByRole('button', { name: 'Count rows for 9 objects' }).click();
-  await expect(page.getByRole('dialog')).toContainText('9 queries');
-  await page.getByRole('button', { name: 'Run 9 queries' }).click();
-  await expect(page.getByText(/rows across 9 counted objects/)).toBeVisible({ timeout: 20_000 });
+  await page.getByRole('button', { name: 'Count rows for 12 objects' }).click();
+  await expect(page.getByRole('dialog')).toContainText('12 queries');
+  await page.getByRole('button', { name: 'Run 12 queries' }).click();
+  await expect(page.getByText(/rows across 12 counted objects/)).toBeVisible({ timeout: 20_000 });
 
   // Explorer + object detail + profile
   await page.getByRole('link', { name: 'Explorer' }).click();
@@ -134,13 +134,20 @@ test('sign in → connect → explore → query → library → admin → discon
   const vip = page.getByRole('row', { name: /Lapsed VIPs/ });
   await expect(vip).toContainText('312');
   await expect(vip.getByRole('link', { name: 'Unified Individual' })).toBeVisible();
-  await vip.getByRole('button', { name: 'rules' }).click();
+  // Rows counted earlier size each refresh: Unified Individual, Individual and Email Engagement.
+  await expect(vip).toContainText('9K'); // 9,006 rows
+  await expect(page.getByText(/active segments? that can be priced/)).toBeVisible();
+  await vip.getByRole('button', { name: 'Details for Lapsed VIPs' }).click();
   await expect(page.getByText(/Publishes every 24 hours · next /)).toBeVisible();
   await expect(page.locator('pre.sql').first()).toContainText('"operator": "greaterThan"');
-  await expect(page.getByRole('row', { name: /Draft Test/ }).getByRole('button', { name: 'rules' })).toBeDisabled();
+  const segCredits = page.locator('.forecast-card', { hasText: 'Credits for this segment' });
+  await expect(segCredits.getByRole('cell', { name: 'At its schedule (every 24 hours)' })).toBeVisible();
+  await expect(segCredits.getByRole('cell', { name: /Activating its 312 members/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Details for Draft Test' }).click();
+  await expect(page.getByText('The API returned no rules for this segment.')).toBeVisible();
 
   // Exports: no queries run, files come straight from what's loaded and cached
-  await page.getByRole('link', { name: 'Overview' }).click();
+  await page.getByRole('navigation', { name: 'Primary' }).getByRole('link', { name: 'Overview' }).click();
   const dictionary = page.getByRole('group', { name: 'Data dictionary export' });
   const [xlsx] = await Promise.all([page.waitForEvent('download'), dictionary.getByRole('button', { name: 'Excel' }).click()]);
   expect(xlsx.suggestedFilename()).toMatch(/^data-dictionary_mock-org\.my\.salesforce\.com_default_\d{4}-\d{2}-\d{2}\.xlsx$/);
@@ -168,7 +175,7 @@ test('sign in → connect → explore → query → library → admin → discon
   const chip = panel(page).locator('span.est');
   await expect(chip).toContainText('est. ≈ <0.01 credits'); // 2,500 rows at 3 credits per million
   await expect(chip).toHaveAttribute('title', /Reads up to 2,500 rows, about <0\.01 credits at 3 credits per million rows/);
-  await expect(chip).toHaveAttribute('title', /Salesforce reports no credit usage/);
+  await expect(chip).toHaveAttribute('title', /a query reports no credits of its own/);
 
   // Autocomplete from metadata
   await setSql(page, 'SELECT * FROM ssot__Ind');
@@ -321,7 +328,7 @@ test('sign in → connect → explore → query → library → admin → discon
   await other.close();
 
   // Data space switch re-reads metadata
-  await page.getByRole('link', { name: 'Overview' }).click();
+  await page.getByRole('navigation', { name: 'Primary' }).getByRole('link', { name: 'Overview' }).click();
   await page.getByLabel('Data space').selectOption('marketing');
   await expect(tile('Data model objects')).toHaveText('2');
 

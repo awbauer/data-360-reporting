@@ -341,3 +341,5 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); }
 .seed-list input[type='checkbox'] { margin-top: 3px; accent-color: var(--accent); flex: none; }
 .seed-head { padding-bottom: 4px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
 .seed-item { padding: 4px 0 4px 18px; }
+.actual-line { margin: 2px 0 6px; }
+.actual-gap { margin-top: 4px; padding: 6px 8px; border-radius: 6px; background: var(--warn-soft); color: var(--warn); }

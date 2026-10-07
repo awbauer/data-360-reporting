@@ -20,12 +20,15 @@ export function fmtMs(ms: number): string {
 
 /** Whole credits, with up to two decimals for small amounts (a 1M-row query is 3 credits). */
 export function fmtCredits(x: number): string {
+  if (x > 0 && x < 0.01) return '< 0.01';
   return Math.abs(x) >= 100 ? nf.format(Math.round(x)) : new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(x);
 }
 
 export function fmtMoney(x: number, currency = 'USD'): string {
   try {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(x);
+    // Cents only where they matter: a query costs fractions of a cent, a plan thousands.
+    const digits = Math.abs(x) < 10 ? 2 : 0;
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: digits, maximumFractionDigits: digits }).format(x);
   } catch {
     return `${nf.format(Math.round(x))} ${currency}`;
   }

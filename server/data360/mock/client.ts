@@ -5,7 +5,7 @@ import { DATE_UNITS, parseTimestamp, truncate, type DateUnit } from '../../../sh
 import type { CellValue, Extras, QueryColumn } from '../../../shared/types';
 import { normalizeDataSpaces, normalizeIdentityResolutions, normalizeInsight, normalizeMappings, normalizeMetadata } from '../normalize';
 import { UpstreamError, type Data360Client } from '../types';
-import { DATA_SPACES, INSIGHTS, MAPPINGS, MARKETING_OBJECTS, METADATA } from './fixtures';
+import { CONSUMPTION_DLOS, DATA_SPACES, INSIGHTS, MAPPINGS, MARKETING_OBJECTS, METADATA } from './fixtures';
 
 // Loaded via require: Vite/Vitest don't recognise the newer `node:sqlite` builtin.
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
@@ -111,6 +111,75 @@ function seedIdentity(db: DatabaseSync, people: unknown[][]): void {
   db.exec('COMMIT');
 }
 
+/**
+ * Digital Wallet consumption for the mock org, relative to `now`: per-resource hourly rows for the
+ * last 35 days (the org's own segments, insight and streams), daily totals for ~13 months that
+ * agree with them where they overlap, a smaller second card, and the credits purchased.
+ */
+function seedConsumption(db: DatabaseSync, now: number): void {
+  const rnd = mulberry32(11);
+  const DAY = 86_400_000;
+  const HOUR = 3_600_000;
+  const day = (t: number) => new Date(t).toISOString().slice(0, 10);
+  const hour = (t: number) => new Date(t).toISOString().slice(0, 13) + ':00:00Z';
+  db.exec(`
+    CREATE TABLE "TenantDailyEntitlementConsumption__dll" ("utilizationdate__c" TEXT, "carddefinitiondevelopername__c" TEXT,
+      "usagebusinessenvtype__c" TEXT, "unitsconsumed__c" REAL, "usageconsumed__c" REAL, "unit__c" REAL, "multiplier__c" REAL);
+    CREATE TABLE "TenantHourlyEntitlementConsumption__dll" ("usagehourbucket__c" TEXT, "resourcetype__c" TEXT, "resourceidorapiname__c" TEXT,
+      "businessenvtype__c" TEXT, "rowdetail__c" TEXT, "unitsconsumed__c" REAL, "usageconsumed__c" REAL, "unit__c" REAL, "multiplier__c" REAL);
+    CREATE TABLE "TenantEntitlementTransaction__dll" ("carddefinitiondevelopername__c" TEXT, "quantity__c" REAL);
+  `);
+  // [type, name, credits a day, run hour (or -1 for every hour), environment]
+  const resources: [string, string, number, number, string][] = [
+    ['IdentityResolution', 'Individual_Default_Ruleset', 1500, 2, 'PRODUCTION'],
+    ['DataStream', 'Web_SDK_Events', 900, -1, 'PRODUCTION'],
+    ['Segment', 'Lapsed_VIPs', 120, 6, 'PRODUCTION'],
+    ['Segment', 'New_Subscribers', 45, 6, 'PRODUCTION'],
+    ['DataTransform', 'Orders_Cleanup', 40, 1, 'PRODUCTION'],
+    ['CalculatedInsight', 'Avg_Spends__cio', 30, 3, 'PRODUCTION'],
+    ['Activation', 'Lapsed_VIPs_Marketing_Cloud', 15, 7, 'PRODUCTION'],
+    ['Query', 'data360-workbench', 3, -1, 'PRODUCTION'],
+    ['Segment', 'Lapsed_VIPs', 20, 8, 'SANDBOX'],
+  ];
+  const hourly = db.prepare('INSERT INTO "TenantHourlyEntitlementConsumption__dll" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const daily = db.prepare('INSERT INTO "TenantDailyEntitlementConsumption__dll" VALUES (?, ?, ?, ?, ?, ?, ?)');
+  const dailyRow = (d: string, card: string, env: string, credits: number) =>
+    daily.run(d, card, env, Math.round(credits * 100) / 100, Math.round(credits * 20_000), 1_000_000, 50);
+  const today = Math.floor(now / DAY) * DAY;
+  const totals = new Map<string, number>();
+  db.exec('BEGIN');
+  // Hourly, last 35 days up to the current hour; the latest two hours are still being processed.
+  for (let t = today - 35 * DAY; t <= now; t += HOUR) {
+    const h = new Date(t).getUTCHours();
+    for (const [type, name, perDay, at, env] of resources) {
+      if (at >= 0 && h !== at) continue;
+      const credits = (at >= 0 ? perDay : perDay / 24) * (0.8 + 0.4 * rnd());
+      hourly.run(hour(t), type, name, env, now - t < 2 * HOUR ? 'PENDING' : 'PROCESSED', Math.round(credits * 100) / 100, Math.round(credits * 20_000), 1_000_000, 50);
+      const k = `${day(t)}|${env}`;
+      totals.set(k, (totals.get(k) ?? 0) + credits);
+    }
+    // 33 days ago the ruleset was rerun from scratch: every source profile counted again.
+    if (t === today - 33 * DAY + 2 * HOUR) {
+      hourly.run(hour(t), 'IdentityResolution', 'Individual_Default_Ruleset', 'PRODUCTION', 'PROCESSED', 18_000, 360_000_000, 1_000_000, 50);
+      totals.set(`${day(t)}|PRODUCTION`, (totals.get(`${day(t)}|PRODUCTION`) ?? 0) + 18_000);
+    }
+  }
+  // Daily: the hourly totals where they overlap, a growing, noisy series before that.
+  for (let t = today - 400 * DAY; t <= today; t += DAY) {
+    const d = day(t);
+    const growth = 1.15 ** (-(today - t) / DAY / 365);
+    const prod = totals.get(`${d}|PRODUCTION`) ?? 2_673 * growth * (0.85 + 0.3 * rnd());
+    const sandbox = totals.get(`${d}|SANDBOX`) ?? 20 * (0.8 + 0.4 * rnd());
+    dailyRow(d, 'Data360Credits', 'PRODUCTION', prod);
+    dailyRow(d, 'Data360Credits', 'SANDBOX', sandbox);
+    dailyRow(d, 'AgentforceCredits', 'PRODUCTION', 200 * growth * (0.7 + 0.6 * rnd()));
+  }
+  const bought = db.prepare('INSERT INTO "TenantEntitlementTransaction__dll" VALUES (?, ?)');
+  bought.run('Data360Credits', 1_500_000);
+  bought.run('AgentforceCredits', 100_000);
+  db.exec('COMMIT');
+}
+
 function columnType(v: CellValue): string {
   if (typeof v === 'number') return Number.isInteger(v) ? 'BigInt' : 'Double';
   if (typeof v === 'boolean') return 'Bool';
@@ -126,7 +195,7 @@ interface Stored {
 /** Slow-path threshold: results larger than this report `Running` for a couple of polls. */
 const SLOW_ROWS = 2000;
 
-export function createMockClient(): Data360Client {
+export function createMockClient(opts: { now?: number } = {}): Data360Client {
   const db = new DatabaseSync(':memory:');
   // node:sqlite types the accumulator as an SQL value, but any JS value works at runtime.
   db.aggregate('APPROX_COUNT_DISTINCT', {
@@ -144,6 +213,7 @@ export function createMockClient(): Data360Client {
     return Number.isFinite(t) ? new Date(truncate(t, unit as DateUnit)).toISOString().replace('.000Z', '+00:00') : null;
   });
   seed(db);
+  seedConsumption(db, opts.now ?? Date.now());
   const queries = new Map<string, Stored>();
 
   const get = (id: string): Stored => {
@@ -169,6 +239,7 @@ export function createMockClient(): Data360Client {
         ...normalizeMetadata(METADATA.DataModelObject, 'dmo'),
         ...normalizeMetadata(METADATA.DataLakeObject, 'dlo'),
         ...normalizeMetadata(METADATA.CalculatedInsight, 'ci'),
+        ...normalizeMetadata(CONSUMPTION_DLOS, 'dlo'),
       ].filter((o) => dataspace === 'default' || MARKETING_OBJECTS.has(o.name));
       return { objects, warnings: [] };
     },
@@ -243,7 +314,9 @@ export function createMockClient(): Data360Client {
       let rows: CellValue[][];
       let names: string[];
       try {
-        const stmt = db.prepare(sql);
+        // SQLite reads CAST(x AS DATE) as a number (2026 from '2026-10-01'). Hyper doesn't; ISO text
+        // compares and truncates the same way, so the mock keeps such values as text.
+        const stmt = db.prepare(sql.replace(/\bAS\s+(DATE|TIMESTAMP)\s*\)/gi, 'AS TEXT)'));
         stmt.setReturnArrays(true);
         names = stmt.columns().map((c) => c.name);
         rows = stmt.all(bound) as unknown as CellValue[][]; // setReturnArrays(true)

@@ -282,8 +282,8 @@ function Usage() {
       <div className="row wrap">
         <div className="muted small grow">
           Query reads this workbench estimated, by person and org, at {QUERY_CREDITS_PER_MILLION} credits per million rows (the base Flex rate). It counts only queries run here:
-          ingestion, unification, segmentation and activation are not visible to it, and Salesforce reports no credit figures, so reconcile
-          against Salesforce's own usage reports.
+          ingestion, unification, segmentation and activation are not visible to it, and a query reports no credits of its own. For what the
+          org really consumed, by day and by resource, see Credits, Actual consumption (Salesforce's consumption feeds), or Digital Wallet.
         </div>
         <label className="small row" style={{ flexDirection: 'row', alignItems: 'center' }}>
           Last

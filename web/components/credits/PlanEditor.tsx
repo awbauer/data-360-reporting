@@ -18,10 +18,12 @@ import {
   type PlanItem,
   type RateCard,
 } from '@shared/credits';
+import { planActuals } from '@shared/consumption';
+import { useConsumption } from '../../lib/consumption';
 import { ApiError, api, type StoredPlan } from '../../api';
 import { useOptionalWorkbench } from '../../context';
 import { exportPlan } from '../../lib/exports';
-import { fmtCredits, fmtMoney, fmtPct } from '../../lib/format';
+import { fmtAgo, fmtCredits, fmtMoney, fmtPct } from '../../lib/format';
 import { Bars } from '../Bars';
 import { BarChart, LineChart } from '../charts';
 import { QuantityInput } from '../QuantityInput';
@@ -163,7 +165,6 @@ function Editor({ stored, onReload, onDuplicate, onDelete }: {
   const est = useMemo(() => estimate(view, card), [view, card]);
   // Levers worth showing: at least 0.1% of the plan.
   const lv = useMemo(() => levers(view, card, est).filter((l) => l.saves >= est.total.pooled * 0.001), [view, card, est]);
-  const consumption = wb?.objects.find((o) => /TenantConsumptionInsights/i.test(o.name));
 
   const doExport = (format: 'xlsx' | 'md') => {
     setExportError(null);
@@ -290,13 +291,7 @@ function Editor({ stored, onReload, onDuplicate, onDelete }: {
       )}
 
       <Actuals plan={plan} est={est} onChange={(actuals) => set('actuals', actuals)} hint={
-        consumption ? (
-          <div className="alert small">
-            This org has <Link to={`/explorer/${encodeURIComponent(consumption.name)}`}>{consumption.label}</Link> (<code>{consumption.name}</code>), where
-            Salesforce publishes tenant consumption data. It isn’t read automatically: its fields count usage units, not credits, and
-            haven’t been checked against a real org here. Look at it in the Explorer and compare it with Digital Wallet.
-          </div>
-        ) : null
+        wb ? <FillFromOrg plan={plan} onFill={(actuals) => set('actuals', actuals)} /> : null
       } />
 
       <RateCardDetails plan={plan} card={card} onOverride={(utId, v) => update((p) => {
@@ -480,6 +475,66 @@ function LeverRow({ lever, of, onApply }: { lever: Lever; of: number; onApply: (
         <div className="small muted">{of ? fmtPct(lever.saves / of) : ''} of the plan</div>
       </div>
       <button onClick={onApply}>Apply</button>
+    </div>
+  );
+}
+
+/**
+ * Fills the plan's actuals from the connected org's consumption feeds: each complete month since the
+ * contract start, for the chosen consumption cards. Sandbox counts only where the card pools it.
+ */
+function FillFromOrg({ plan, onFill }: { plan: CreditPlan; onFill: (a: CreditPlan['actuals']) => void }) {
+  const c = useConsumption();
+  const data = c.data;
+  const allCards = useMemo(() => [...new Set((data?.monthly ?? []).map((m) => m.card).filter((x): x is string => Boolean(x)))].sort(), [data]);
+  const [picked, setPicked] = useState<Set<string> | null>(null);
+  // Default to the Data 360 cards when the feed has several (an Agentforce card shouldn't count here).
+  const dataLike = allCards.filter((x) => /data|360|cdp/i.test(x));
+  const cards = picked ?? new Set(dataLike.length ? dataLike : allCards);
+  const [done, setDone] = useState<string | null>(null);
+  if (!c.sources.length) {
+    return <div className="small muted">This data space has no consumption feeds to fill these from (<Link to="/credits/actual">where they come from</Link>).</div>;
+  }
+  if (!c.pick.totals) return null;
+  const fill = () => {
+    if (!plan.start || !data) return;
+    const d = new Date();
+    const through = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+    const rows = planActuals(data, plan.start, plan.months, { ...(allCards.length ? { cards } : {}), includeSandbox: true, through });
+    const kept = plan.actuals.filter((a) => !rows.some((r) => r.month === a.month));
+    onFill([...kept, ...rows.map((r) => ({ month: r.month, credits: Math.round(r.credits) }))].sort((a, b) => a.month - b.month));
+    setDone(rows.length ? `Filled ${rows.length} month${rows.length === 1 ? '' : 's'}.` : 'No complete month of consumption falls inside this plan yet.');
+  };
+  return (
+    <div className="alert small stack" style={{ gap: 8 }}>
+      <div>
+        <b>From this org’s consumption.</b>{' '}
+        {data
+          ? <>Read {fmtAgo(data.at)} from <code>{data.sources.totals}</code>. Fills each complete month since the contract start, sandbox included (one Flex pool).</>
+          : <>The org’s consumption feed (<code>{c.pick.totals.object.name}</code>) hasn’t been read in this browser yet.</>}
+      </div>
+      {allCards.length > 1 && (
+        <div className="row wrap" role="group" aria-label="Cards to count">
+          {allCards.map((x) => (
+            <label key={x} className="row" style={{ flexDirection: 'row', gap: 4, color: 'var(--text)' }}>
+              <input type="checkbox" style={{ width: 'auto' }} checked={cards.has(x)} onChange={(e) => {
+                const n = new Set(cards);
+                if (e.target.checked) n.add(x);
+                else n.delete(x);
+                setPicked(n);
+              }} />
+              {x}
+            </label>
+          ))}
+        </div>
+      )}
+      <div className="row wrap">
+        {data
+          ? <button onClick={fill} disabled={!plan.start || (allCards.length > 0 && !cards.size)}>Fill actuals from consumption</button>
+          : <button onClick={() => void c.load()} disabled={Boolean(c.progress)}>{c.progress ?? `Read consumption (${c.queries} small queries)`}</button>}
+        {!plan.start && <span className="muted">Set the contract start first: months are matched to it.</span>}
+        {done && <span role="status">{done}</span>}
+      </div>
     </div>
   );
 }

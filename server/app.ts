@@ -83,7 +83,7 @@ const queryBody = z.object({
   dataspace: z.string().regex(DATASPACE_RE).default('default'),
   paramDefs: z.array(paramDef).max(100).default([]),
   params: z.record(z.string()).default({}),
-  source: z.enum(['editor', 'explorer', 'overview', 'library']).default('editor'),
+  source: z.enum(['editor', 'explorer', 'overview', 'library', 'credits']).default('editor'),
   /** The browser's estimate of rows read, from cached row counts. Recorded, never trusted for anything. */
   estRows: z.number().int().min(0).max(1e13).nullable().optional(),
   estComplete: z.boolean().optional(),

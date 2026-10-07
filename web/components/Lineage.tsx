@@ -24,7 +24,7 @@ function ObjLink({ name }: { name: string }) {
 }
 
 /** Streams that load a DLO. Shares the Overview's cached list. */
-function useStreamsFor(dloName: string): StreamInfo[] {
+export function useStreamsFor(dloName: string): StreamInfo[] {
   const wb = useWorkbench();
   const host = wb.session.instanceHost ?? '';
   const extras = useQuery({ queryKey: ['extras', host, wb.dataspace], queryFn: () => api.extras(wb.dataspace) });

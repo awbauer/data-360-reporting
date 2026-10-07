@@ -60,6 +60,16 @@ export const countCache = {
   },
 };
 
+/** Every cached row count for these objects, by name. */
+export function cachedCounts(host: string, ds: string, objects: { name: string }[]): Record<string, CachedCount> {
+  const out: Record<string, CachedCount> = {};
+  for (const o of objects) {
+    const c = countCache.get(host, ds, o.name);
+    if (c) out[o.name] = c;
+  }
+  return out;
+}
+
 export const profileCache = {
   get: (host: string, ds: string, obj: string) => readJson<ObjectProfile | null>(cacheKey('profile', host, ds, obj), null),
   set(host: string, ds: string, obj: string, v: ObjectProfile) {

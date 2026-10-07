@@ -1,14 +1,8 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { ACTIVITY, UNIT_NAME, frequencyOf, type PlanItem } from '@shared/credits';
-import { seedCandidates, type SeedCandidate } from '@shared/credits-seed';
-import type { InsightDefinition } from '@shared/types';
-import { api } from '../../api';
 import { useWorkbench } from '../../context';
 import { fmtNum } from '../../lib/format';
-import { countCache } from '../../lib/storage';
-
-const MAX_INSIGHTS = 60;
+import { useOrgSeed } from '../../lib/useOrgSeed';
 
 /**
  * Proposes activities from the connected org's streams, identity resolution, insights and
@@ -32,58 +26,10 @@ export function SeedDialog({ open, onClose, onAdd }: { open: boolean; onClose: (
 
 function SeedBody({ titleId, onClose, onAdd }: { titleId: string; onClose: () => void; onAdd: (items: PlanItem[]) => void }) {
   const wb = useWorkbench();
-  const qc = useQueryClient();
-  const host = wb.session.instanceHost ?? '';
-  const extras = useQuery({ queryKey: ['extras', host, wb.dataspace], queryFn: () => api.extras(wb.dataspace) });
-  const insightObjects = useMemo(() => wb.objects.filter((o) => o.kind === 'ci').slice(0, MAX_INSIGHTS), [wb.objects]);
-  const [insights, setInsights] = useState<InsightDefinition[] | null>(null);
   const [changePct, setChangePct] = useState(5);
   const [picked, setPicked] = useState<Set<string> | null>(null);
-
-  // Insight definitions, three at a time, through the same cache the Explorer uses.
-  useEffect(() => {
-    let live = true;
-    const out: InsightDefinition[] = [];
-    let next = 0;
-    const worker = async () => {
-      while (live && next < insightObjects.length) {
-        const o = insightObjects[next++]!;
-        try {
-          out.push(await qc.fetchQuery({ queryKey: ['insight', host, o.name], queryFn: () => api.insight(o.name), staleTime: 15 * 60_000 }));
-        } catch {
-          /* a missing definition just leaves that insight unsized */
-        }
-      }
-    };
-    void Promise.all([worker(), worker(), worker()]).then(() => live && setInsights(out));
-    return () => {
-      live = false;
-    };
-  }, [qc, host, insightObjects]);
-
-  const counts = useMemo(() => {
-    const c: Record<string, { rows: number; at: string }> = {};
-    for (const o of wb.objects) {
-      const v = countCache.get(host, wb.dataspace, o.name);
-      if (v) c[o.name] = v;
-    }
-    return c;
-  }, [wb.objects, host, wb.dataspace]);
-
-  const loading = extras.isLoading || insights === null;
-  const candidates = useMemo<SeedCandidate[]>(() => {
-    if (loading) return [];
-    let n = 0;
-    return seedCandidates({
-      objects: wb.objects,
-      extras: extras.data ?? null,
-      insights: insights ?? [],
-      counts,
-      changeRate: changePct / 100,
-      // Stable ids, so ticks survive a change of the change rate; fresh ones are made on add.
-      newId: () => `seed-${n++}`,
-    });
-  }, [loading, wb.objects, extras.data, insights, counts, changePct]);
+  const seed = useOrgSeed(true, changePct / 100);
+  const { loading, candidates } = seed;
 
   // Complete candidates start ticked; ones missing a row count start unticked.
   useEffect(() => {
@@ -101,13 +47,12 @@ function SeedBody({ titleId, onClose, onAdd }: { titleId: string; onClose: () =>
       }
       return s;
     });
-  const counted = Object.keys(counts).length;
 
   return (
     <div className="dlg">
       <h2 id={titleId}>Add activities from this org</h2>
       <p className="small muted" style={{ margin: 0 }}>
-        From data space <b>{wb.dataspace}</b>’s metadata and the row counts cached in this browser ({counted} of {wb.objects.length} objects
+        From data space <b>{wb.dataspace}</b>’s metadata and the row counts cached in this browser ({seed.counted} of {seed.objects} objects
         counted). This runs no queries. Each line says what it assumed; review the numbers before relying on them.
       </p>
       <div className="row wrap small">
@@ -117,10 +62,10 @@ function SeedBody({ titleId, onClose, onAdd }: { titleId: string; onClose: () =>
           % of rows change per incremental run
         </label>
       </div>
-      {extras.error && <div className="alert warn small">Could not load streams and segments: {extras.error.message}</div>}
-      {extras.data?.errors.map((e) => <div className="alert warn small" key={e}>{e}</div>)}
+      {seed.extrasError && <div className="alert warn small">Could not load streams and segments: {seed.extrasError}</div>}
+      {seed.errors.map((e) => <div className="alert warn small" key={e}>{e}</div>)}
       {loading ? (
-        <div className="hint">Reading streams, segments{insightObjects.length ? ` and ${insightObjects.length} insight definitions` : ''}…</div>
+        <div className="hint">Reading streams, segments{seed.insightCount ? ` and ${seed.insightCount} insight definitions` : ''}…</div>
       ) : !candidates.length ? (
         <div className="alert">Nothing to add: this data space has no data streams, identity resolution, calculated insights or segments the API returned.</div>
       ) : (

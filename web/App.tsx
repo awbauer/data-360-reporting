@@ -11,11 +11,12 @@ import { Explorer } from './pages/Explorer';
 import { HistoryPage } from './pages/History';
 import { LibraryPage } from './pages/Library';
 import { Overview } from './pages/Overview';
-import { SegmentsPage } from './pages/Segments';
 import { NotAllowed, SignIn } from './pages/SignIn';
 
 // The editor pulls in CodeMirror, so load it only when the Query page is opened.
 const QueryPage = lazy(() => import('./pages/Query').then((m) => ({ default: m.QueryPage })));
+// Segments price every segment with the credit engine, so they load with it, on first visit.
+const SegmentsPage = lazy(() => import('./pages/Segments').then((m) => ({ default: m.SegmentsPage })));
 const CreditsPage = lazy(() => import('./pages/Credits').then((m) => ({ default: m.CreditsPage })));
 
 export function App() {
@@ -122,7 +123,7 @@ function Shell() {
         <Route path="/" element={<Navigate to="/overview" replace />} />
         <Route path="/overview" element={<main className="main"><Overview /></main>} />
         <Route path="/explorer/*" element={<main className="main flush"><Explorer /></main>} />
-        <Route path="/segments" element={<main className="main"><SegmentsPage /></main>} />
+        <Route path="/segments" element={<main className="main"><Suspense fallback={<div className="hint">Loading…</div>}><SegmentsPage /></Suspense></main>} />
         <Route path="/query" element={<main className="main flush"><Suspense fallback={<div className="hint">Loading editor…</div>}><QueryPage /></Suspense></main>} />
         <Route path="/library" element={<main className="main"><LibraryPage /></main>} />
         <Route path="/history" element={<main className="main"><HistoryPage /></main>} />

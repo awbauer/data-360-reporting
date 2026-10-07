@@ -170,6 +170,44 @@ export const METADATA = {
   CalculatedInsight: { metadata: [ci] },
 } as const;
 
+/**
+ * Digital Wallet's consumption feeds as data lake objects, with the object and field names Salesforce
+ * documents ("Build a Credit Feedback Loop for Data 360"). The date columns are text, which is why
+ * Salesforce's examples cast them. `carddefinitiondevelopername__c` on the entitlement object is
+ * assumed (the post says purchases are per card but doesn't name the column).
+ */
+const consumption = (name: string, displayName: string, fields: ReturnType<typeof f>[]) => ({
+  name, displayName, category: 'Other', fields, indexes: [], primaryKeys: [], relationships: [],
+});
+export const CONSUMPTION_DLOS = {
+  metadata: [
+    consumption('TenantDailyEntitlementConsumption__dll', 'Tenant Daily Entitlement Consumption', [
+      f('utilizationdate__c', 'Utilization Date', 'STRING'),
+      f('carddefinitiondevelopername__c', 'Card Definition Developer Name', 'STRING'),
+      f('usagebusinessenvtype__c', 'Usage Business Env Type', 'STRING'),
+      f('unitsconsumed__c', 'Units Consumed', 'NUMBER'),
+      f('usageconsumed__c', 'Usage Consumed', 'NUMBER'),
+      f('unit__c', 'Unit', 'NUMBER'),
+      f('multiplier__c', 'Multiplier', 'NUMBER'),
+    ]),
+    consumption('TenantHourlyEntitlementConsumption__dll', 'Tenant Hourly Entitlement Consumption', [
+      f('usagehourbucket__c', 'Usage Hour Bucket', 'STRING'),
+      f('resourcetype__c', 'Resource Type', 'STRING'),
+      f('resourceidorapiname__c', 'Resource Id Or Api Name', 'STRING'),
+      f('businessenvtype__c', 'Business Env Type', 'STRING'),
+      f('rowdetail__c', 'Row Detail', 'STRING'),
+      f('unitsconsumed__c', 'Units Consumed', 'NUMBER'),
+      f('usageconsumed__c', 'Usage Consumed', 'NUMBER'),
+      f('unit__c', 'Unit', 'NUMBER'),
+      f('multiplier__c', 'Multiplier', 'NUMBER'),
+    ]),
+    consumption('TenantEntitlementTransaction__dll', 'Tenant Entitlement Transaction', [
+      f('carddefinitiondevelopername__c', 'Card Definition Developer Name', 'STRING'),
+      f('quantity__c', 'Quantity', 'NUMBER'),
+    ]),
+  ],
+};
+
 /** Objects visible in the non-default `marketing` data space. */
 export const MARKETING_OBJECTS = new Set(['ssot__Individual__dlm', 'ssot__EmailEngagement__dlm', 'Avg_Spends__cio']);
 
