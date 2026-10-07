@@ -144,6 +144,10 @@ await step(`Data streams and segments (${dataspace})`, async () => {
   const streams = x.dataStreams?.items ?? [];
   const segments = x.segments?.items ?? [];
   console.log(`   streams naming their DLO: ${streams.filter((s) => s.dataLakeObject).length}/${streams.length}`);
+  // Credit seeding reads these; each is a guess at the key name until a real org confirms it.
+  const has = (k: 'connectorType' | 'refreshMode' | 'refreshFrequency' | 'lastRunRecords') => `${streams.filter((s) => s[k] !== undefined).length}/${streams.length}`;
+  console.log(`   streams with connectorType ${has('connectorType')}, refreshMode ${has('refreshMode')}, refreshFrequency ${has('refreshFrequency')}, lastRunRecords ${has('lastRunRecords')}`);
+  console.log(`   connector types: ${[...new Set(streams.map((s) => s.connectorType ?? '?'))].join(', ')}; refresh modes: ${[...new Set(streams.map((s) => s.refreshMode ?? '?'))].join(', ')}`);
   console.log(`   segments with include criteria: ${segments.filter((s) => s.includeCriteria).length}/${segments.length}; with exclude: ${segments.filter((s) => s.excludeCriteria).length}`);
   const sample = segments.find((s) => s.includeCriteria)?.includeCriteria;
   if (sample) console.log(`   include criteria is ${(() => { try { return `JSON ${shapeDeep(JSON.parse(sample))}`; } catch { return 'not JSON'; } })()}`);

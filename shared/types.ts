@@ -94,6 +94,14 @@ export interface StreamInfo {
   totalRecords?: number;
   /** The data lake object this stream loads, when the API says. */
   dataLakeObject?: string;
+  /** Below: best-effort, from the spec; used to seed credit estimates. */
+  connectorType?: string;
+  /** e.g. FULL_REFRESH, UPSERT. */
+  refreshMode?: string;
+  /** e.g. HOURLY, DAILY. */
+  refreshFrequency?: string;
+  /** Rows the last run processed. */
+  lastRunRecords?: number;
 }
 
 export interface SegmentInfo {

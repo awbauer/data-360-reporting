@@ -1,3 +1,4 @@
+import type { CreditPlan } from '@shared/credits';
 import type { DataSpace, Extras, InsightDefinition, MappingResult, ObjectMeta, ParamDef, QueryChunk, QueryColumn, QueryResponse } from '@shared/types';
 
 export class ApiError extends Error {
@@ -98,6 +99,21 @@ export interface HistoryItem {
   rows: number | null;
   elapsedMs: number | null;
   error: string | null;
+}
+
+export interface PlanSummary {
+  id: string;
+  name: string;
+  client: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface StoredPlan {
+  id: string;
+  plan: CreditPlan;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface AdminBlock {
@@ -240,6 +256,16 @@ export const api = {
       return request<LoginEvent[]>(`/api/admin/logins?${q}`);
     },
     actions: () => request<AdminAction[]>('/api/admin/actions'),
+  },
+  /** Credit plans: per user, and available before any org is connected. */
+  plans: {
+    list: () => request<PlanSummary[]>('/api/plans'),
+    get: (id: string) => request<StoredPlan>(`/api/plans/${enc(id)}`),
+    create: (plan: CreditPlan) => request<{ id: string; createdAt: number; updatedAt: number }>('/api/plans', { method: 'POST', json: { plan } }),
+    /** Refused with 409 `conflict` if the plan was saved elsewhere since `baseUpdatedAt`. */
+    save: (id: string, plan: CreditPlan, baseUpdatedAt: number) =>
+      request<{ updatedAt: number }>(`/api/plans/${enc(id)}`, { method: 'PUT', json: { plan, baseUpdatedAt } }),
+    remove: (id: string) => request<{ ok: true }>(`/api/plans/${enc(id)}`, { method: 'DELETE' }),
   },
   getState: <T>(key: 'tabs') => request<{ value: T; updatedAt: number } | null>(`/api/state/${key}`),
   putState: (key: 'tabs', value: unknown) => request<{ ok: true }>(`/api/state/${key}`, { method: 'PUT', json: { value } }),

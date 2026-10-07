@@ -16,9 +16,9 @@ export function UserMenu({ session }: { session: SessionInfo }) {
   const signOut = useSignOut();
   if (!session.user) return null;
   return (
-    <div className="row small" style={{ gap: 8 }}>
-      <span className="muted" title="Signed in to the workbench">{session.user.email}</span>
-      <button type="button" onClick={signOut}>Sign out</button>
+    <div className="row small user-menu" style={{ gap: 8 }}>
+      <span className="muted user-email" title="Signed in to the workbench">{session.user.email}</span>
+      <button type="button" onClick={signOut} title={`Signed in as ${session.user.email}`}>Sign out</button>
     </div>
   );
 }

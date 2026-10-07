@@ -1,4 +1,5 @@
 import { createAdminStore } from './admin-store';
+import { createPlanStore } from './plan-store';
 import type { SqlDatabase } from './db';
 import type { ParamDef } from '../shared/types';
 
@@ -75,6 +76,7 @@ export interface AuditFilter {
 export function createStore(db: SqlDatabase) {
   return {
     ...createAdminStore(db),
+    ...createPlanStore(db),
     async logRun(r: RunRecord): Promise<void> {
       await db
         .prepare(

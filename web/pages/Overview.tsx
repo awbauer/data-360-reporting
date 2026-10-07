@@ -6,10 +6,16 @@ import { api } from '../api';
 import { Bars } from '../components/Bars';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useWorkbench } from '../context';
-import { fmtAgo, fmtNum } from '../lib/format';
+import { fmtAgo, fmtCredits, fmtNum } from '../lib/format';
 import { computeOverview } from '@shared/overview';
 import { exportDictionary, exportHealth, type DictionaryFormat, type HealthFormat } from '../lib/exports';
 import { useRowCounts } from '../lib/useRowCounts';
+
+/**
+ * Base-tier Flex multiplier for Data 360 Queries, per million rows scanned. Kept here rather than
+ * imported so the rate cards stay out of the main bundle; tests/credits.test.ts checks it matches.
+ */
+const QUERY_RATE = 3;
 
 export function Overview() {
   const wb = useWorkbench();
@@ -172,7 +178,8 @@ export function Overview() {
       >
         <p style={{ margin: 0 }}>
           This runs <b>{countable.length} queries</b> (<code>SELECT COUNT(*)</code>, three at a time) against data space{' '}
-          <b>{wb.dataspace}</b>. Data 360 bills queries as consumption credits, so large objects can cost real money.
+          <b>{wb.dataspace}</b>. Data 360 bills queries by rows scanned: {QUERY_RATE} Flex Credits per million rows at the base rate.
+          {totalRows > 0 && <> At the {fmtNum(totalRows)} rows last counted, that is about {fmtCredits((totalRows / 1e6) * QUERY_RATE)} credits.</>}
         </p>
       </ConfirmDialog>
     </div>

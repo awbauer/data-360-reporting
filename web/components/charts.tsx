@@ -215,13 +215,25 @@ export function LineChart({
   xName = 'x',
   ariaLabel,
   formatX,
-}: CommonProps & { points: LinePoint[]; formatX: (x: number) => string }) {
+  reference,
+  zero,
+  ticks,
+}: CommonProps & {
+  points: LinePoint[];
+  formatX: (x: number) => string;
+  /** A labelled threshold (a budget, a limit): drawn as a rule, not a series. */
+  reference?: { value: number; label: string };
+  /** Start the y-axis at zero. */
+  zero?: boolean;
+  /** x values to label (default: five evenly spaced, which may fall between data points). */
+  ticks?: number[];
+}) {
   const svg = useRef<SVGSVGElement>(null);
   const [active, setActive] = useState<number | null>(null);
   const n = points.length;
 
   const geo = useMemo(() => {
-    const ys = points.map((p) => p.y);
+    const ys = [...points.map((p) => p.y), ...(reference ? [reference.value] : []), ...(zero ? [0] : [])];
     const y = niceScale(Math.min(...ys), Math.max(...ys));
     const xs = points.map((p) => p.x);
     const x0 = Math.min(...xs);
@@ -230,9 +242,9 @@ export function LineChart({
     const yPos = (v: number) => M.t + PH - ((v - y.lo) / (y.hi - y.lo || 1)) * PH;
     const path = points.map((p, i) => `${i ? 'L' : 'M'}${xPos(p.x).toFixed(1)},${yPos(p.y).toFixed(1)}`).join('');
     const area = n > 1 ? `${path}L${xPos(x1)},${yPos(y.lo)}L${xPos(x0)},${yPos(y.lo)}Z` : '';
-    const ticks = n > 1 ? Array.from({ length: 5 }, (_, i) => x0 + ((x1 - x0) * i) / 4) : [x0];
-    return { y, xPos, yPos, path, area, ticks };
-  }, [points, n]);
+    const xTicks = ticks ?? (n > 1 ? Array.from({ length: 5 }, (_, i) => x0 + ((x1 - x0) * i) / 4) : [x0]);
+    return { y, xPos, yPos, path, area, ticks: xTicks };
+  }, [points, n, reference, zero, ticks]);
 
   const nearest = (clientX: number) => {
     const box = svg.current?.getBoundingClientRect();
@@ -276,6 +288,12 @@ export function LineChart({
       >
         <Frame y={geo.y} yPos={geo.yPos} svgProps={{ ref: svg, onPointerMove: (e) => nearest(e.clientX) }}>
           {geo.area && <path className="area" d={geo.area} />}
+          {reference && (
+            <g>
+              <line className="ref-line" x1={M.l} x2={W - M.r} y1={geo.yPos(reference.value)} y2={geo.yPos(reference.value)} />
+              <text className="ref-text" x={W - M.r} y={geo.yPos(reference.value) - 5} textAnchor="end">{reference.label}</text>
+            </g>
+          )}
           <path className="line" d={geo.path} />
           {geo.ticks.map((t, i) => (
             <text key={i} className="axis-text" x={geo.xPos(t)} y={H - M.b + 16} textAnchor={i === 0 && n > 1 ? 'start' : i === geo.ticks.length - 1 && n > 1 ? 'end' : 'middle'}>

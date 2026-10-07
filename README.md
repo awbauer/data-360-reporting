@@ -10,6 +10,7 @@ A web workbench for Salesforce **Data 360** (formerly Data Cloud). Sign in to th
 - **Query**: a SQL editor with autocomplete from your metadata, `:named` parameters, **multiple tabs**, **Format**, cancel, paging, CSV export and a **Table / Chart** toggle (bar or line of one measure against one dimension). Queries with no `LIMIT` ask first, showing cached row counts for the objects they read.
 - **Library**: a shared set of saved queries that lives in this repository (`queries/`) and changes through pull requests. `queries/identity/` holds identity-resolution diagnostics: consolidation rate, cluster-size distribution, largest clusters, profiles by source, overlap between sources and individuals without a unified profile.
 - **History**: your recent editor runs, on any device you sign in from.
+- **Credits**: credit plans for consultants, saved to your workbench account and usable before any org is connected (the Connect page links to it). See [Credit planning](#credit-planning).
 - **Admin** (people in `AUTH_ADMIN_EMAILS`):
   - **Users**: everyone who has signed in, with provider, last sign-in, active sessions and query count. Open one to see their sessions and sign-in history, sign them out everywhere, or **block** them. Blocking ends their sessions at once and refuses future sign-ins, whatever the allowlist says. Admins can't block themselves or another admin.
   - **Sign-ins**: every successful sign-in, and every attempt the allowlist or a block turned away, with IP and browser.
@@ -71,11 +72,12 @@ npm run smoke                       # or: SF_TARGET_ORG=<alias> npm run smoke
 
 It exercises data spaces, metadata, submit/status/rows/cancel and a parameterised query, and prints HTTP statuses and response *shapes* only (no tokens, no row values), so the output is safe to share.
 
-Three features were built from the spec alone and need that run before you rely on them; the smoke test prints the key names they depend on:
+Four features were built from the spec alone and need that run before you rely on them; the smoke test prints the key names they depend on:
 
 - **Lineage** reads `/ssot/data-model-object-mappings` (`objectSourceTargetMaps`, filtered with `dmoDeveloperName` / `dloDeveloperName`) and a stream's `dataLakeObjectInfo`.
 - **Insight definitions** read `/ssot/calculated-insights/{apiName}`; **segment rules** read `includeCriteria` / `excludeCriteria` from the segment list.
 - **Identity queries** assume `IndividualIdentityLink__dlm` (`SourceRecordId__c`, `UnifiedRecordId__c`, `ssot__DataSourceId__c`).
+- **Credit seeding** reads a stream's connector type (`connectorInfo.connectorType`), refresh mode and frequency (`refreshConfig`) and last-run rows (`lastNumberOfRowsAddedCount`); without them it falls back to the stream's name and a daily schedule.
 
 The lineage and definition cards include a **Raw API response** toggle so you can compare against what the normalizer understood.
 
@@ -153,9 +155,24 @@ The workbench also keeps its own record: every query (from the editor, Explorer 
 
 Sign-ins are recorded too (`login_event`): successes, and attempts refused by the allowlist or a block, with IP (from `CF-Connecting-IP` on Cloudflare, otherwise the first `X-Forwarded-For` hop, which a client can forge when Node isn't behind a proxy) and user agent. Both logs are purged after `AUDIT_RETENTION_DAYS`. Admin actions (`admin_action`) are not purged.
 
+## Credit planning
+
+The **Credits** page estimates what a client's Data 360 work will consume and tracks it against the contract.
+
+- **Estimate.** A plan lists *activities* in units a consultant can reason about: rows per run and how often, rows per day for streaming, one-time volumes (a backfill, the first full identity resolution run), production or sandbox, and the months each runs in. The rate card maps each activity to a billed usage type.
+- **Two rate cards, transcribed as published:** the [Flex Credits Rate Card](https://www.salesforce.com/en-us/wp-content/uploads/sites/4/assets/pdf/agentforce/Flex-Credits-Rate-Card-06.17.2026.pdf) (June 17, 2026) and the [Data Services credits rate card](https://www.salesforce.com/en-us/wp-content/uploads/sites/4/documents/platform/data-cloud-platform-services-rate-sheet-dc-9-04.pdf) (August 2025). Every plan is also priced on the other card, for clients moving between them. Those are different credits at different prices, so compare cost, not counts. Multipliers can be overridden per usage type for negotiated or updated rates. Check them against the client's order form; Salesforce changes them.
+- **Flex tiers are simulated, not averaged.** Multipliers fall with credits used per usage type in the calendar month (300k / 1.5M / 12.5M), and reset monthly. Runs are laid out in time order, and a run that crosses into a tier is billed entirely at that tier, as Salesforce's Trailhead example shows. A big first unification run therefore bills at tier 2, not base. Flex sandbox is flat and draws on the same credits; Data Services sandbox credits are a separate entitlement and are shown apart.
+- **What maps where** follows Salesforce's Data Services → Flex mapping (Trailhead, *Maximize Your Data 360 Credits*): batch transforms and batch insights are *Prep*; streaming ingestion, transforms, insights and data actions are *Streaming Pipeline*. Batch ingestion, federation and rows shared have no Flex usage type and show as **not billed**. Activities a card doesn't price (inferences and Private Connect on Flex; intelligent processing and code extensions on Data Services) show as **not priced**, count as 0 and raise a warning. Streaming activations on Flex are assumed to bill as *Activation*; Salesforce's table lists batch only.
+- **Plan.** Contract start and length, entitlement, price per 100,000 credits and annual growth give monthly credits, a running total against the entitlement (and the month it runs out), and the cost. **Ways to cut the estimate** re-prices concrete changes (a streaming flow as a daily batch, a segment, insight or activation refreshed daily instead of hourly) and can apply them.
+- **Track.** Enter each month's credits from Digital Wallet; the running total uses actuals where entered and the estimate after. If the org has the Tenant Consumption Insights DMO, the page points to it, but doesn't read it: its fields count usage units, not credits, and haven't been checked against a real org.
+- **Start from the org.** *Add from this org* proposes activities from data streams, identity resolution, calculated insights (from the objects their SQL reads and their schedule) and segments (every object they read, not their member count), with published segments' activations. It uses metadata and the row counts cached on the Overview page, so it runs no queries. Each proposal states its assumptions (for example, the share of rows changing per run), and ones missing a row count start unticked. Stream connector type, refresh mode, frequency and last-run rows are read under keys from the spec; `npm run smoke` reports whether a real org returns them. Without them, streams are classified by name and assumed daily.
+- **Export** to Excel or Markdown: summary, activities with their assumptions, months, usage types (with the highest Flex tier reached), the rate card and the levers.
+
+Plans live in the `credit_plan` table, one JSON document per plan, at most 50 per user. Saving checks the version you opened, so a save from a second tab or device is reported rather than silently overwritten.
+
 ## Cost awareness
 
-Data 360 bills queries as consumption credits. The app never scans data on its own: the Overview uses metadata only, and row counts, profiling and top-values run only when you click, after a confirmation that states how many queries will run. Results are cached in your browser with a timestamp. Counts and profiles are approximate by design (`APPROX_COUNT_DISTINCT`). Running a query with no `LIMIT` asks first (and can add one for you); the guard is a text heuristic, so it can miss a `LIMIT` inside a subquery or warn on an unusual query. It can be silenced for the browser session.
+Data 360 bills queries as consumption credits, by rows scanned: 3 Flex Credits per million rows at the base rate (2 Data Services credits), so queries are rarely what drives a bill. Unification, streaming and frequent segment refreshes are; the Credits page shows by how much. The app never scans data on its own: the Overview uses metadata only, and row counts, profiling and top-values run only when you click, after a confirmation that states how many queries will run. Results are cached in your browser with a timestamp. Counts and profiles are approximate by design (`APPROX_COUNT_DISTINCT`). Running a query with no `LIMIT` asks first (and can add one for you); the guard is a text heuristic, so it can miss a `LIMIT` inside a subquery or warn on an unusual query. It can be silenced for the browser session.
 
 ## Query library
 

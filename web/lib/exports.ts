@@ -1,3 +1,4 @@
+import type { CreditPlan } from '@shared/credits';
 import type { CachedStats, ReportContext } from '@shared/report';
 import type { Extras, ObjectMeta } from '@shared/types';
 import { countCache, profileCache } from './storage';
@@ -48,6 +49,18 @@ export async function exportDictionary(format: DictionaryFormat, objects: Object
   const { strToU8, zipSync } = await import('fflate');
   const files = Object.fromEntries(tables.map((t) => [`${t.name}.csv`, strToU8(`${BOM}${report.tableToCsv(t)}`)]));
   save(zipSync(files) as Uint8Array<ArrayBuffer>, 'application/zip', `${base}_csv.zip`);
+}
+
+export type PlanFormat = 'xlsx' | 'md';
+
+export async function exportPlan(format: PlanFormat, plan: CreditPlan, at = new Date()): Promise<void> {
+  const report = await import('@shared/credits-report');
+  const tables = report.planTables(plan, at);
+  const base = `credit-estimate_${slug(plan.client ? `${plan.client}-${plan.name}` : plan.name) || 'plan'}_${at.toISOString().slice(0, 10)}`;
+  if (format === 'md') return save(report.planMarkdown(tables), 'text/markdown;charset=utf-8', `${base}.md`);
+  const { buildXlsx } = await import('@shared/xlsx');
+  const bytes = buildXlsx(tables.map((t) => ({ name: t.title, header: t.header, rows: t.rows })));
+  save(bytes as Uint8Array<ArrayBuffer>, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', `${base}.xlsx`);
 }
 
 export async function exportHealth(

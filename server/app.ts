@@ -12,6 +12,7 @@ import { authorizeUrl, exchangeCode, OAuthError, preflightAuthorize, revokeToken
 import { maskClientId, type RunRecord, type Store } from './store';
 import type { Block } from './admin-store';
 import { registerAdminRoutes } from './admin-routes';
+import { registerPlanRoutes } from './plan-routes';
 import { toCsvLine } from '../shared/csv';
 import { toSqlParameters } from '../shared/sql';
 import type { ParamDef, QueryResponse } from '../shared/types';
@@ -324,6 +325,7 @@ export function createApp({ config, fetch: fetchFn = fetch, mockClient, auth, st
   });
 
   registerAdminRoutes(app, { config, store });
+  registerPlanRoutes(app, { store });
 
   app.get('/api/audit', async (c) => {
     if (!isAdmin(config, c.get('user')!)) return c.json({ error: 'forbidden', message: 'Admins only' }, 403);
