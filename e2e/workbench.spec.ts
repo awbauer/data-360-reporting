@@ -100,8 +100,12 @@ test('sign in → connect → explore → query → library → admin → discon
   await expect(lineage.getByRole('row', { name: /Email Address/ })).toContainText('Email__c');
   await expect(lineage).toContainText('3 fields with no source mapping');
   await lineage.getByRole('link', { name: 'Contact Home' }).click();
+  // Salesforce can only list mappings into one DMO at a time, so the DLO side walks them on request
   const feeds = page.locator('.card', { has: page.getByRole('heading', { name: 'What this feeds' }) });
   await expect(feeds).toContainText('Loaded by data stream Salesforce CRM Contact');
+  await expect(feeds).toContainText('7 API calls, no query credits');
+  await expect(feeds.getByRole('heading', { name: /Feeds/ })).toHaveCount(0); // nothing is looked up automatically
+  await feeds.getByRole('button', { name: 'Find the objects this feeds' }).click();
   await expect(feeds.getByRole('heading', { name: /Feeds/ })).toHaveCount(2);
   await feeds.getByText('Raw API response').click();
   await expect(feeds.locator('pre')).toContainText('objectSourceTargetMaps');
@@ -116,8 +120,13 @@ test('sign in → connect → explore → query → library → admin → discon
   await page.locator('.obj-item', { hasText: 'Avg Spends' }).click();
   const definition = page.locator('.card', { has: page.getByRole('heading', { name: 'Definition' }) });
   await expect(definition).toContainText('Average order value per individual');
+  await expect(definition).toContainText('in use'); // definition status
+  await expect(definition).toContainText('not scheduled');
   await expect(definition.locator('pre.sql').first()).toContainText('SELECT AVG(');
-  await expect(definition.getByRole('row', { name: /Avg Spend/ })).toContainText('measure');
+  const avg = definition.getByRole('row', { name: /Avg Spend/ });
+  await expect(avg).toContainText('measure');
+  await expect(avg).toContainText('AVG(SalesOrder__dlm.grand_total_amount__c)');
+  await expect(avg).not.toContainText('AGGREGATABLE'); // an enum, never shown as the formula
 
   // Segments with their rules, read-only
   await page.getByRole('link', { name: 'Segments' }).click();
@@ -126,6 +135,7 @@ test('sign in → connect → explore → query → library → admin → discon
   await expect(vip).toContainText('312');
   await expect(vip.getByRole('link', { name: 'Unified Individual' })).toBeVisible();
   await vip.getByRole('button', { name: 'rules' }).click();
+  await expect(page.getByText(/Publishes daily · next /)).toBeVisible();
   await expect(page.locator('pre.sql').first()).toContainText('"operator": "greaterThan"');
   await expect(page.getByRole('row', { name: /Draft Test/ }).getByRole('button', { name: 'rules' })).toBeDisabled();
 

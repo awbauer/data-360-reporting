@@ -1,4 +1,4 @@
-import type { CellValue, DataSpace, Extras, InsightDefinition, MappingResult, ObjectKind, ObjectMeta, QueryChunk, QueryColumn, QueryResponse } from '../../shared/types';
+import type { CellValue, DataSpace, Extras, InsightDefinition, MappingResult, ObjectMeta, QueryChunk, QueryColumn, QueryResponse } from '../../shared/types';
 import type { SqlParameter } from '../../shared/sql';
 
 export interface SubmitQueryInput {
@@ -31,9 +31,13 @@ export interface Data360Client {
   getMetadata(dataspace: string): Promise<MetadataResult>;
   /** Data streams (org-wide) and segments (per data space); each side fails independently. */
   getExtras(dataspace: string): Promise<Extras>;
-  /** DLO → DMO mappings touching `object` (a DMO's sources, or a DLO's targets). */
-  getMappings(dataspace: string, object: string, kind: Exclude<ObjectKind, 'ci'>): Promise<MappingResult>;
-  getCalculatedInsight(dataspace: string, name: string): Promise<InsightDefinition>;
+  /**
+   * The DLO → DMO mappings into one data model object. The API requires the DMO; `dlo` only narrows
+   * it. There is no way to ask "which DMOs does this DLO feed" in one call.
+   */
+  getMappings(dataspace: string, dmo: string, dlo?: string): Promise<MappingResult>;
+  /** The single-insight endpoint takes no data space parameter. */
+  getCalculatedInsight(name: string): Promise<InsightDefinition>;
   submitQuery(input: SubmitQueryInput): Promise<QueryResponse>;
   getStatus(queryId: string, dataspace: string, waitMs: number): Promise<QueryStatus>;
   getRows(queryId: string, dataspace: string, offset: number, limit: number): Promise<PageResult>;

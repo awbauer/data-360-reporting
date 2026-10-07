@@ -21,7 +21,7 @@ const counts = {
 beforeAll(async () => {
   objects = (await client.getMetadata('default')).objects;
   extras = await client.getExtras('default');
-  insights = [await client.getCalculatedInsight('default', 'Avg_Spends__cio')];
+  insights = [await client.getCalculatedInsight('Avg_Spends__cio')];
 });
 
 const find = (c: SeedCandidate[], source: string) => c.find((x) => x.item.source === source)!;
@@ -65,6 +65,8 @@ describe('seeding a plan from the org', () => {
     // The fixture's SQL reads SalesOrder__dlm (not in this org's metadata) and ssot__Individual__dlm.
     expect(ci.item).toMatchObject({ kind: 'ci_batch', perRun: 2_500, runsPerMonth: DAILY });
     expect(ci.item.assumption).toMatch(/Reads ssot__Individual__dlm \(2,500\)/);
+    // The fixture insight is NOT_SCHEDULED: still costed (daily), and said so.
+    expect(ci.item.assumption).toMatch(/Not on a schedule; assumed run daily/);
     const without = find(seedCandidates({ ...base(), insights: [], counts }), 'Calculated insight Avg_Spends__cio');
     expect(without.incomplete).toBe(true);
   });
@@ -76,6 +78,7 @@ describe('seeding a plan from the org', () => {
     // Built on UnifiedIndividual; criteria read Individual and EmailEngagement.
     expect(vip.item.perRun).toBe(1_600 + 2_500 + 5_000);
     expect(vip.incomplete).toBe(false);
+    expect(vip.item.assumption).toMatch(/Publishes daily\./);
     expect(c.filter((x) => x.group === 'Segments').map((x) => x.item.label)).not.toContain('Draft Test');
     const act = c.find((x) => x.group === 'Activations' && x.item.source === 'Segment Lapsed_VIPs')!;
     expect(act.item).toMatchObject({ kind: 'activation_batch', perRun: 312 });

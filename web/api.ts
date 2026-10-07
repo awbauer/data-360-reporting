@@ -273,9 +273,9 @@ export const api = {
   metadata: (dataspace: string) =>
     request<{ objects: ObjectMeta[]; warnings: string[] }>(`/api/metadata?dataspace=${enc(dataspace)}`),
   extras: (dataspace: string) => request<Extras>(`/api/extras?dataspace=${enc(dataspace)}`),
-  mappings: (dataspace: string, object: string, kind: 'dmo' | 'dlo') =>
-    request<MappingResult>(`/api/mappings?dataspace=${enc(dataspace)}&kind=${kind}&object=${enc(object)}`),
-  insight: (dataspace: string, name: string) => request<InsightDefinition>(`/api/insights/${enc(name)}?dataspace=${enc(dataspace)}`),
+  /** The DLOs mapped into one DMO. The upstream API has no lookup by DLO alone. */
+  mappings: (dataspace: string, dmo: string) => request<MappingResult>(`/api/mappings?dataspace=${enc(dataspace)}&dmo=${enc(dmo)}`),
+  insight: (name: string) => request<InsightDefinition>(`/api/insights/${enc(name)}`),
   submit: (input: RunInput) => request<QueryResponse>('/api/query', { method: 'POST', json: input }),
   status: (id: string, dataspace: string, waitMs: number, signal?: AbortSignal) =>
     request<QueryStatus>(`/api/query/${enc(id)}?dataspace=${enc(dataspace)}&wait=${waitMs}`, { signal }),

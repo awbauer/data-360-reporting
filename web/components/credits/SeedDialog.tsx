@@ -49,7 +49,7 @@ function SeedBody({ titleId, onClose, onAdd }: { titleId: string; onClose: () =>
       while (live && next < insightObjects.length) {
         const o = insightObjects[next++]!;
         try {
-          out.push(await qc.fetchQuery({ queryKey: ['insight', host, wb.dataspace, o.name], queryFn: () => api.insight(wb.dataspace, o.name), staleTime: 15 * 60_000 }));
+          out.push(await qc.fetchQuery({ queryKey: ['insight', host, o.name], queryFn: () => api.insight(o.name), staleTime: 15 * 60_000 }));
         } catch {
           /* a missing definition just leaves that insight unsized */
         }
@@ -59,7 +59,7 @@ function SeedBody({ titleId, onClose, onAdd }: { titleId: string; onClose: () =>
     return () => {
       live = false;
     };
-  }, [qc, host, wb.dataspace, insightObjects]);
+  }, [qc, host, insightObjects]);
 
   const counts = useMemo(() => {
     const c: Record<string, { rows: number; at: string }> = {};

@@ -2,7 +2,7 @@
 // calculated insights and segments. Uses only metadata, list responses and row counts the browser
 // cached earlier, so it runs no queries. Every item says how its numbers were arrived at; most are
 // assumptions for the consultant to confirm, and the picker shows them before anything is added.
-import { DAILY, FREQUENCIES, newItem, type ActivityKind, type PlanItem } from './credits';
+import { DAILY, newItem, scheduleRuns, type ActivityKind, type PlanItem } from './credits';
 import type { Extras, InsightDefinition, ObjectMeta, StreamInfo } from './types';
 
 export interface SeedInput {
@@ -24,7 +24,6 @@ export interface SeedCandidate {
   incomplete: boolean;
 }
 
-const freq = (id: string) => FREQUENCIES.find((f) => f.id === id)!.runs;
 const n = (x: number) => Math.round(x).toLocaleString('en-US');
 const pctText = (x: number) => `${Math.round(x * 1000) / 10}%`;
 
@@ -38,23 +37,6 @@ export function classifyStream(s: StreamInfo): { kind: ActivityKind; basis: stri
   if (INTERNAL.test(text)) return { kind: 'ingest_internal', basis };
   if (STREAMING.test(text)) return { kind: 'ingest_streaming', basis };
   return { kind: 'ingest_batch', basis };
-}
-
-function refreshRuns(frequency: string | undefined): { runs: number; known: boolean } {
-  const f = frequency ?? '';
-  if (/15/.test(f)) return { runs: freq('15m'), known: true };
-  if (/hour/i.test(f)) return { runs: freq('1h'), known: true };
-  if (/week/i.test(f)) return { runs: freq('weekly'), known: true };
-  if (/month/i.test(f)) return { runs: freq('monthly'), known: true };
-  if (/day|daily/i.test(f)) return { runs: DAILY, known: true };
-  return { runs: DAILY, known: false };
-}
-
-/** `publishScheduleInterval` values seen in the spec: ONE, SIX, TWELVE, TWENTY_FOUR (hours). */
-function insightRuns(schedule: string | undefined): { runs: number; known: boolean } {
-  const hours: Record<string, number> = { ONE: 1, SIX: 6, TWELVE: 12, TWENTY_FOUR: 24 };
-  const h = hours[(schedule ?? '').toUpperCase()];
-  return h ? { runs: (DAILY * 24) / h, known: true } : { runs: DAILY, known: false };
 }
 
 /** Object API names an expression or criteria text mentions, among the org's objects. */
@@ -103,8 +85,9 @@ export function seedCandidates(input: SeedInput): SeedCandidate[] {
       incomplete = true;
       a.push('The API gave no record count; enter the volume.');
     }
-    const runs = kind === 'ingest_streaming' ? { runs: DAILY, known: true } : refreshRuns(s.refreshFrequency);
-    if (!runs.known) a.push('Refresh schedule unknown; assumed daily.');
+    const sched = scheduleRuns(s.refreshFrequency);
+    const runs = kind === 'ingest_streaming' ? { runs: DAILY, known: true } : sched.known && !sched.manual ? sched : { runs: DAILY, known: false };
+    if (!runs.known) a.push(`Refresh schedule ${s.refreshFrequency ? `“${s.refreshFrequency}”` : 'unknown'}; assumed daily.`);
     out.push({
       group: 'Data streams',
       incomplete,
@@ -138,7 +121,9 @@ export function seedCandidates(input: SeedInput): SeedCandidate[] {
     const d = defs.get(o.name);
     const reads = d?.expression ? objectsMentioned(d.expression, objects).filter((x) => x !== o.name) : [];
     const r = rowsOf(reads, counts);
-    const runs = insightRuns(d?.schedule);
+    const sched = scheduleRuns(d?.schedule);
+    // Not scheduled still runs when someone runs it; daily is the cautious guess.
+    const runs = sched.known && !sched.manual ? sched : { runs: DAILY, known: false };
     const streaming = /stream/i.test(d?.definitionType ?? '');
     const a: string[] = [];
     if (!d?.expression) a.push('The definition wasn’t available, so the objects it reads are unknown; enter the rows it reads.');
@@ -147,7 +132,8 @@ export function seedCandidates(input: SeedInput): SeedCandidate[] {
       if (r.parts) a.push(`Reads ${r.parts}.`);
       if (r.missing.length) a.push(`No cached count for ${r.missing.join(', ')}. ${COUNT_FIRST}`);
     }
-    if (!runs.known) a.push(`Schedule ${d?.schedule ? `“${d.schedule}”` : 'unknown'}; assumed daily.`);
+    if (sched.manual) a.push('Not on a schedule; assumed run daily. Change it to how often it’s really run.');
+    else if (!runs.known) a.push(`Schedule ${d?.schedule ? `“${d.schedule}”` : 'unknown'}; assumed daily.`);
     out.push({
       group: 'Calculated insights',
       incomplete: !reads.length || r.missing.length > 0,
@@ -169,15 +155,20 @@ export function seedCandidates(input: SeedInput): SeedCandidate[] {
       ...objectsMentioned(`${s.includeCriteria ?? ''} ${s.excludeCriteria ?? ''}`, objects),
     ])];
     const r = rowsOf(reads, counts);
+    // Segments refresh when they publish, so the publish interval is the refresh schedule.
+    const sched = scheduleRuns(s.publishInterval);
+    const runs = sched.known && !sched.manual ? sched.runs : DAILY;
     const a = [
       reads.length ? `Reads ${[r.parts, ...r.missing.map((x) => `${x} (not counted)`)].filter(Boolean).join(', ')}.` : 'Could not tell which objects it reads; enter the rows it reads.',
-      'Refresh schedule isn’t in the API; assumed daily.',
+      sched.known && !sched.manual
+        ? `Publishes ${s.publishInterval!.toLowerCase().replace(/_/g, ' ')}.`
+        : `Publish schedule ${s.publishInterval ? `“${s.publishInterval}”` : 'unknown'}; assumed daily.`,
       ...(r.missing.length ? [COUNT_FIRST] : []),
     ];
     out.push({
       group: 'Segments',
       incomplete: !reads.length || r.missing.length > 0,
-      item: newItem('segmentation', newId(), { label: s.label, perRun: r.rows, runsPerMonth: DAILY, assumption: a.join(' '), source: `Segment ${s.apiName}` }),
+      item: newItem('segmentation', newId(), { label: s.label, perRun: r.rows, runsPerMonth: runs, assumption: a.join(' '), source: `Segment ${s.apiName}` }),
     });
     if (/success/i.test(s.publishStatus ?? '') && s.lastMemberCount !== undefined) {
       out.push({
@@ -186,8 +177,8 @@ export function seedCandidates(input: SeedInput): SeedCandidate[] {
         item: newItem('activation_batch', newId(), {
           label: `${s.label} activation`,
           perRun: s.lastMemberCount,
-          runsPerMonth: DAILY,
-          assumption: `Assumes one activation of the last published ${n(s.lastMemberCount)} members per daily refresh; add related attribute rows if it sends them.`,
+          runsPerMonth: runs,
+          assumption: `Assumes the last published ${n(s.lastMemberCount)} members are activated each time it publishes; add related attribute rows if it sends them.`,
           source: `Segment ${s.apiName}`,
         }),
       });

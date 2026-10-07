@@ -240,6 +240,27 @@ export const FREQUENCIES: { id: string; label: string; runs: number }[] = [
 ];
 export const DAILY = AVG_DAYS;
 
+const HOUR_WORDS: Record<string, number> = { ONE: 1, TWO: 2, THREE: 3, FOUR: 4, SIX: 6, EIGHT: 8, TWELVE: 12, TWENTY_FOUR: 24 };
+
+/**
+ * Runs per month for a schedule as the API spells it: an insight's `publishScheduleInterval`
+ * (ONE, SIX, TWELVE, TWENTY_FOUR hours; NOT_SCHEDULED), a segment's `publishInterval` (DAILY...),
+ * a stream's refresh frequency (HOURLY, DAILY...). `known` is false when it can't tell; `manual`
+ * when the API says the thing isn't scheduled.
+ */
+export function scheduleRuns(schedule: string | undefined): { runs: number; known: boolean; manual?: boolean } {
+  const t = (schedule ?? '').trim().toUpperCase();
+  if (/NOT_SCHEDULED|^NONE$|MANUAL|ON_DEMAND/.test(t)) return { runs: 0, known: true, manual: true };
+  if (/15/.test(t) && /MIN/.test(t)) return { runs: AVG_DAYS * 96, known: true };
+  if (/HOURLY/.test(t)) return { runs: AVG_DAYS * 24, known: true };
+  const hours = HOUR_WORDS[t.replace(/_?HOURS?$/, '')] ?? (/^(\d+)(_?HOURS?)?$/.test(t) ? Number(/^\d+/.exec(t)![0]) : undefined);
+  if (hours) return { runs: (AVG_DAYS * 24) / hours, known: true };
+  if (/DAILY|DAY/.test(t)) return { runs: AVG_DAYS, known: true };
+  if (/WEEK/.test(t)) return { runs: 52 / 12, known: true };
+  if (/MONTH/.test(t)) return { runs: 1, known: true };
+  return { runs: AVG_DAYS, known: false };
+}
+
 /** The preset matching a run rate, if any (rates are compared loosely: they come back from JSON). */
 export function frequencyOf(runsPerMonth: number): { id: string; label: string; runs: number } | undefined {
   return FREQUENCIES.find((f) => Math.abs(f.runs - runsPerMonth) < 1e-6 * Math.max(1, f.runs));

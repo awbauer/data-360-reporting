@@ -14,6 +14,7 @@ import {
   newItem,
   newPlan,
   parseQuantity,
+  scheduleRuns,
   type CreditPlan,
   type PlanItem,
 } from '../shared/credits';
@@ -208,6 +209,19 @@ describe('helpers', () => {
     expect(parseQuantity('')).toBeNull();
     expect(parseQuantity('-4')).toBeNull();
     expect(parseQuantity('5x')).toBeNull();
+  });
+
+  it('reads schedules as the API spells them', () => {
+    expect(scheduleRuns('TWENTY_FOUR').runs).toBeCloseTo(DAILY, 9);
+    expect(scheduleRuns('SIX').runs).toBeCloseTo(DAILY * 4, 9);
+    expect(scheduleRuns('ONE').runs).toBeCloseTo(DAILY * 24, 9);
+    expect(scheduleRuns('12_HOURS').runs).toBeCloseTo(DAILY * 2, 9);
+    expect(scheduleRuns('DAILY')).toEqual({ runs: DAILY, known: true });
+    expect(scheduleRuns('HOURLY').runs).toBeCloseTo(DAILY * 24, 9);
+    expect(scheduleRuns('WEEKLY').runs).toBeCloseTo(52 / 12, 9);
+    expect(scheduleRuns('NOT_SCHEDULED')).toEqual({ runs: 0, known: true, manual: true });
+    expect(scheduleRuns(undefined).known).toBe(false);
+    expect(scheduleRuns('SOMETIMES').known).toBe(false);
   });
 
   it('labels months from the contract start, across years', () => {

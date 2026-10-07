@@ -84,6 +84,12 @@ function SegmentRow({ s, open, onToggle }: { s: SegmentInfo; open: boolean; onTo
       {open && (
         <tr>
           <td colSpan={7} style={{ background: 'var(--surface-2)' }}>
+            {(s.publishInterval || s.nextPublish) && (
+              <div className="small muted" style={{ marginBottom: 8 }}>
+                {s.publishInterval ? `Publishes ${s.publishInterval.toLowerCase().replace(/_/g, ' ')}` : 'Publish schedule unknown'}
+                {s.nextPublish ? ` · next ${new Date(s.nextPublish).toLocaleString()}` : ''}
+              </div>
+            )}
             <div className="grid cols-2">
               <Criteria title="Include" text={s.includeCriteria} />
               <Criteria title="Exclude" text={s.excludeCriteria} />

@@ -111,6 +111,8 @@ export interface SegmentInfo {
   publishStatus?: string;
   lastMemberCount?: number;
   lastPublished?: string;
+  nextPublish?: string;
+  publishInterval?: string;
   description?: string;
   /** The object the segment is built on (usually Unified Individual). */
   segmentOn?: string;
@@ -123,6 +125,7 @@ export interface SegmentInfo {
 /** One DLO → DMO mapping and its field pairs (`/ssot/data-model-object-mappings`). */
 export interface ObjectMapping {
   name: string;
+  status?: string;
   /** Source data lake object. */
   source: string;
   /** Target data model object. */
@@ -139,8 +142,9 @@ export interface MappingResult {
 export interface InsightField {
   name: string;
   label: string;
-  /** Formula or aggregation, when the API includes one. */
+  /** How the field is computed, e.g. `COUNT(ssot__Case__dlm.ssot__Id__c)`. */
   formula?: string;
+  dataType?: string;
 }
 
 /** `/ssot/calculated-insights/{apiName}`. Everything but the name is best-effort. */
@@ -150,9 +154,14 @@ export interface InsightDefinition {
   description?: string;
   expression?: string;
   status?: string;
+  /** e.g. IN_USE. */
+  definitionStatus?: string;
+  enabled?: boolean;
   lastRunStatus?: string;
   lastRunAt?: string;
+  lastRunError?: string;
   definitionType?: string;
+  /** e.g. NOT_SCHEDULED. */
   schedule?: string;
   dimensions: InsightField[];
   measures: InsightField[];

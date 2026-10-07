@@ -142,13 +142,14 @@ export function createConnectClient(
       };
     },
 
-    async getMappings(dataspace, object, kind) {
-      const key = kind === 'dmo' ? 'dmoDeveloperName' : 'dloDeveloperName';
-      return normalizeMappings(await call('GET', `/data-model-object-mappings${qs({ dataspace, [key]: object })}`));
+    async getMappings(dataspace, dmo, dlo) {
+      return normalizeMappings(
+        await call('GET', `/data-model-object-mappings${qs({ dataspace, dmoDeveloperName: dmo, dloDeveloperName: dlo })}`),
+      );
     },
 
-    async getCalculatedInsight(dataspace, name) {
-      return normalizeInsight(await call('GET', `/calculated-insights/${encodeURIComponent(name)}${qs({ dataspace })}`), name);
+    async getCalculatedInsight(name) {
+      return normalizeInsight(await call('GET', `/calculated-insights/${encodeURIComponent(name)}`), name);
     },
 
     async submitQuery({ sql, dataspace, params, rowLimit }) {

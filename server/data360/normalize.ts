@@ -204,6 +204,7 @@ export function normalizeMappings(body: unknown): MappingResult {
     const target = pick(o, 'targetEntityDeveloperName', 'targetObjectDeveloperName', 'targetEntity', 'target') ?? pick(obj(o.target), 'name', 'developerName') ?? '';
     return {
       name: pick(o, 'developerName', 'name', 'label') ?? `${source} → ${target}`,
+      ...(pick(o, 'status') ? { status: pick(o, 'status')! } : {}),
       source,
       target,
       fields: arr(o.fieldMappings ?? o.fields).map((f) => {
@@ -222,15 +223,20 @@ function insightFields(v: unknown): InsightField[] {
   return arr(v).map((f) => {
     const o = obj(f);
     const name = pick(o, 'apiName', 'name', 'developerName') ?? '';
-    const formula = pick(o, 'formula', 'expression', 'fieldAggregationType', 'aggregationType');
-    return { name, label: pick(o, 'displayName', 'label') ?? name, ...(formula ? { formula } : {}) };
+    const formula = pick(o, 'formula', 'expression');
+    const dataType = pick(o, 'dataType');
+    // `fieldAggregationType` is an enum (AGGREGATABLE, NON_AGGREGATABLE), not a formula: ignore it.
+    return { name, label: pick(o, 'displayName', 'label') ?? name, ...(formula ? { formula } : {}), ...(dataType ? { dataType } : {}) };
   });
 }
 
-/** `GET /ssot/calculated-insights/{apiName}`: one object, or a one-item `calculatedInsights` list. */
+/**
+ * `GET /ssot/calculated-insights/{apiName}` (CdpCalculatedInsightRepresentation). The list endpoint
+ * wraps the same objects in `items`, so a one-item `items`/`calculatedInsights` list is accepted too.
+ */
 export function normalizeInsight(body: unknown, name: string): InsightDefinition {
   const b = obj(body);
-  const o = obj(arr(b.calculatedInsights)[0] ?? body);
+  const o = obj(arr(b.items ?? b.calculatedInsights)[0] ?? body);
   const opt = (k: string, ...keys: string[]) => {
     const v = pick(o, ...keys);
     return v ? { [k]: v } : {};
@@ -239,12 +245,15 @@ export function normalizeInsight(body: unknown, name: string): InsightDefinition
     name: pick(o, 'apiName', 'name', 'developerName') ?? name,
     label: pick(o, 'displayName', 'label') ?? name,
     ...opt('description', 'description'),
-    ...opt('expression', 'expression', 'definition', 'sqlExpression'),
-    ...opt('status', 'calculatedInsightStatus', 'status'),
-    ...opt('lastRunStatus', 'lastRunStatus', 'lastCalcInsightStatus'),
-    ...opt('lastRunAt', 'lastCalcInsightStatusDateTime', 'lastRunDateTime', 'lastProcessedDateTime'),
-    ...opt('definitionType', 'definitionType', 'type'),
-    ...opt('schedule', 'publishScheduleInterval', 'schedule'),
+    ...opt('expression', 'expression'),
+    ...opt('status', 'calculatedInsightStatus'),
+    ...opt('definitionStatus', 'definitionStatus'),
+    ...(typeof o.isEnabled === 'boolean' ? { enabled: o.isEnabled } : {}),
+    ...opt('lastRunStatus', 'lastRunStatus'),
+    ...opt('lastRunAt', 'lastRunDateTime', 'lastRunStatusDateTime', 'lastCalcInsightStatusDateTime'),
+    ...opt('lastRunError', 'lastRunStatusErrorCode', 'lastCalcInsightStatusErrorCode'),
+    ...opt('definitionType', 'definitionType'),
+    ...opt('schedule', 'publishScheduleInterval'),
     dimensions: insightFields(o.dimensions),
     measures: insightFields(o.measures),
     raw: body,
@@ -263,6 +272,8 @@ export function normalizeSegments(body: unknown): SegmentInfo[] {
       ...(optStr(o.publishStatus) ? { publishStatus: str(o.publishStatus) } : {}),
       ...(optNum(o.lastSegmentMemberCount) !== undefined ? { lastMemberCount: optNum(o.lastSegmentMemberCount) } : {}),
       ...(optStr(o.lastPublishedEndDateTime) ? { lastPublished: str(o.lastPublishedEndDateTime) } : {}),
+      ...(optStr(o.nextPublishDateTime) ? { nextPublish: str(o.nextPublishDateTime) } : {}),
+      ...(optStr(o.publishInterval) ? { publishInterval: str(o.publishInterval) } : {}),
       ...(optStr(o.description) ? { description: str(o.description) } : {}),
       ...(pick(o, 'segmentOnApiName', 'segmentOn') ? { segmentOn: pick(o, 'segmentOnApiName', 'segmentOn')! } : {}),
       ...(optStr(o.segmentType) ? { segmentType: str(o.segmentType) } : {}),
